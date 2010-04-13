@@ -1,0 +1,7 @@
+Revision history for Sys-CpuAffinity
+
+0.90    Initial release
+	Good support for Windows, Cygwin, Linux
+	Basic support for Solaris, FreeBSD, maybe other BSDs
+
+
