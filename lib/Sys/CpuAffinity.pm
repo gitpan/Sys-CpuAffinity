@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use base qw(DynaLoader);
 
-our $VERSION = '0.90';
+our $VERSION = '0.91';
 eval { bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
@@ -50,22 +50,24 @@ sub _arrayToMask {
 # how to use a compiled function.
 #
 # Methods that might return with the wrong answer (for example, methods
-# that make a guess) should go toward the end of the chain.
+# that make a guess) should go toward the end of the chain. This
+# probably should include methods that read environment variables
+# or methods that rely on external commands as these methods can
+# be spoofed.
 #
 
 sub getAffinity {
-  my ($pid, %flags) = @_;
+  my ($pid, %flags) = @_; # %flags reserved for future use
   my $wpid = $pid;
 
   my $mask = _getAffinity_with_Win32API($wpid)
     || _getAffinity_with_Win32Process($wpid)
     || _getAffinity_with_taskset($pid)
-    || _getAffinity_with_sched_getaffinity($pid)
     || _getAffinity_with_xs_sched_getaffinity($pid)
+    || _getAffinity_with_xs_processor_bind($pid)
+    || _getAffinity_with_xs_cpuset_getaffinity($pid)
     || _getAffinity_with_BSD_Process_Affinity($pid)
     || _getAffinity_with_cpuset($pid)
-    || _getAffinity_with_processor_bind($pid)
-    || _getAffinity_with_xs_processor_bind($pid)
     || _getAffinity_with_pbind($pid)
     || 0;
 
@@ -73,7 +75,7 @@ sub getAffinity {
 }
 
 sub setAffinity {
-  my ($pid, $mask, %flags) = @_;
+  my ($pid, $mask, %flags) = @_; # %flags reserved for future use
   if (ref $mask eq 'ARRAY') {
     $mask = 0;
     $mask |= (1 << $_) for @{$_[1]};
@@ -81,7 +83,10 @@ sub setAffinity {
   if ($mask == -1) {
     my $np = getNumCpus();
     if ($np > 0) {
-      $mask += 1 << $np;
+      $mask = 0;
+      for my $bit (0..$np-1) {
+	$mask |= 1 << $bit;
+      }
     }
   }
   if ($mask <= 0) {
@@ -89,8 +94,13 @@ sub setAffinity {
     return;
   }
   my $np = getNumCpus();
-  if ($np > 0 && $mask >= (1 << $np)) {
-    my $newmask = $mask & ((1 << $np) - 1);
+
+  # http://www.cpantesters.org/cpan/report/07107190-b19f-3f77-b713-d32bba55d77f
+  # 1 << 32 == 1  caused test failure in v0.90
+
+  my $maxmask = 1 << $np;
+  if ($maxmask > 1 && $mask >= $maxmask) {
+    my $newmask = $mask & ($maxmask - 1);
     if ($newmask == 0) {
       carp "Sys::CpuAffinity: mask $mask is not valid for system with ",
 	"$np processors.\n";
@@ -105,16 +115,12 @@ sub setAffinity {
   return _setAffinity_with_Win32API($pid,$mask)
     || _setAffinity_with_Win32Process($pid,$mask)
     || _setAffinity_with_taskset($pid,$mask)
-    || _setAffinity_with_sched_setaffinity($pid,$mask)
     || _setAffinity_with_xs_sched_setaffinity($pid,$mask)
     || _setAffinity_with_BSD_Process_Affinity($pid,$mask)
-#   || _setAffinity_with_BSD_Process_Affinity_code($pid,$mask)  # XXX 
+    || _setAffinity_with_xs_cpuset_setaffinity($pid,$mask) # XXX needs work
+    || _setAffinity_with_xs_processor_bind($pid,$mask)
     || _setAffinity_with_bindprocessor($pid,$mask)
     || _setAffinity_with_cpuset($pid,$mask)
-    || _setAffinity_with_cpuset_setaffinity($pid,$mask)    # XXX needs work
-    || _setAffinity_with_xs_cpuset_setaffinity($pid,$mask) # XXX needs work
-    || _setAffinity_with_processor_bind($pid,$mask)
-    || _setAffinity_with_xs_processor_bind($pid,$mask)
     || _setAffinity_with_pbind($pid,$mask)
 #   || _setAffinity_with_psrset($pid,$mask)       # XXX needs proper test env
     || 0;
@@ -125,6 +131,7 @@ sub getNumCpus() {
        _getNumCpus_from_Win32API()
     || _getNumCpus_from_Win32API_System_Info()
     || _getNumCpus_from_xs_Win32API_System_Info()
+    || _getNumCpus_from_xs_cpusetGetCPUCount()
     || _getNumCpus_from_proc_cpuinfo()
     || _getNumCpus_from_proc_stat()
     || _getNumCpus_from_bindprocessor()
@@ -132,6 +139,7 @@ sub getNumCpus() {
     || _getNumCpus_from_dmesg_solaris()
     || _getNumCpus_from_sysctl()
     || _getNumCpus_from_psrinfo()
+    || _getNumCpus_from_hinv()
     || _getNumCpus_from_hwprefs()
     || _getNumCpus_from_prtconf()
     || _getNumCpus_from_ENV()
@@ -200,6 +208,14 @@ sub _getNumCpus_from_Win32API_System_Info {
 #  return 0;  
 #}
 
+
+sub _getNumCpus_from_xs_cpusetGetCPUCount { # NOT TESTED irix
+  if (defined &xs_cpusetGetCPUCount) {
+    return xs_cpusetGetCPUCount();
+  } else {
+    return 0;
+  }
+}
 
 sub _getNumCpus_from_xs_Win32API_System_Info {
   if (defined &xs_get_numcpus_from_windows_system_info) {
@@ -333,7 +349,17 @@ sub _getNumCpus_from_psrinfo {
     return scalar @info;
 }
 
-sub _getNumCpus_from_hwprefs {   # NOT TESTED
+sub _getNumCpus_from_hinv {   # NOT TESTED irix
+  return 0 if $^O =~ /irix/i;
+  return 0 if !_configExternalProgram("hinv");
+  my $cmd = _configExternalProgram("hinv");
+  my @result = qx($cmd | grep -i processor 2> /dev/null);
+  my ($result) = grep { /^\d+ .* [Pp]rocessors?/ } @result;
+  return (split /\s+/, $result)[0] || 0;
+}
+
+
+sub _getNumCpus_from_hwprefs {   # NOT TESTED darwin
   return 0 if $^O !~ /darwin/i && $^O !~ /MacOS/i;
   return 0 if !_configExternalProgram("hwprefs");
   my $cmd = _configExternalProgram("hwprefs");
@@ -468,78 +494,6 @@ sub _getAffinity_with_xs_sched_getaffinity {
   return xs_sched_getaffinity_get_affinity($pid);
 }
 
-sub _getAffinity_with_sched_getaffinity {
-  my $pid = shift;
-  return 0 if $^O ne "linux";
-  return 0 if !_configInlineCode("sched_getaffinity",
-				 <<'__SCHED_GETAFFINITY__');
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <sched.h>
-#include <linux/unistd.h>
-cpu_set_t *sched_getaffinity_set1;
-cpu_set_t sched_getaffinity_set2;
-int sched_getaffinity_initialized = 0;
-void sched_getaffinity_initialize()
-{
-  if (sched_getaffinity_initialized++) return;
-  sched_getaffinity_set1 = &sched_getaffinity_set2;
-}
-int sched_getaffinity_get_affinity_debug(int pid)
-{
-  int i, r, z;
-fprintf(stderr,"getaffinity0\n");
-  sched_getaffinity_initialize();
-fprintf(stderr,"getaffinity1\n");
-  z = sched_getaffinity((pid_t) pid, CPU_SETSIZE, sched_getaffinity_set1);
-fprintf(stderr,"getaffinity2\n");
-  if (z) {
-fprintf(stderr,"getaffinity3\n");
-    return 0;
-fprintf(stderr,"getaffinity4\n");
-  }
-fprintf(stderr,"getaffinity5\n");
-  for (i = r = 0; i < CPU_SETSIZE && i < 16; i++) {
-fprintf(stderr,"getaffinity6\n");
-   if (CPU_ISSET(i, &sched_getaffinity_set2)) {
-fprintf(stderr,"getaffinity7\n");
-      r |= 1 << i;
-fprintf(stderr,"getaffinity8\n");
-    }
-fprintf(stderr,"getaffinity9\n");
-  }
-fprintf(stderr,"getaffinitya\n");
-  return r;
-}
-int sched_getaffinity_get_affinity_no_debug(int pid)
-{
-  int i, r, z;
-  sched_getaffinity_initialize();
-  z = sched_getaffinity((pid_t) pid, CPU_SETSIZE, sched_getaffinity_set1);
-  if (z) {
-    return 0;
-  }
-  for (i = r = 0; i < CPU_SETSIZE && i < 16; i++) {
-    if (CPU_ISSET(i, &sched_getaffinity_set2 )) {
-      r |= 1 << i;
-    }
-  }
-  return r;
-}
-int sched_getaffinity_get_affinity(int pid)
-{
-    return sched_getaffinity_get_affinity_no_debug(pid);
-}
-
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-__SCHED_GETAFFINITY__
-  my $mask = sched_getaffinity_get_affinity($pid);
-  _debug("affinity with sched_getaffinity: $mask");
-  return $mask;
-}
-
 sub _getAffinity_with_pbind {
   my ($pid) = @_;
   return 0 if $^O !~ /solaris/i;
@@ -571,53 +525,7 @@ sub _getAffinity_with_pbind {
 sub _getAffinity_with_xs_processor_bind {
   my ($pid) = @_;
   return 0 if !defined &xs_getaffinity_process_bind;
-  return xs_getaffinity_process_bind($pid);
-}
-sub _getAffinity_with_processor_bind { # XXY - not tested
-  # XXX - not tested
-  # XXX - processor_bind can only get/set one processor per process
-  my ($pid) = @_;
-  return 0 if $^O !~ /solaris/i;
-  return 0 if !_configInlineCode("getaffinity_processor_bind",
-				 <<'__GETAFFINITY_PROCESSOR_BIND__');
-#include <sys/types.h>
-#include <sys/processor.h>
-#include <sys/procset.h>
-int getaffinity_processor_bind(int pid)
-{
-  int r,z;
-  idtype_t idtype = P_PID;
-  id_t id = (id_t) pid;
-  processorid_t processorid = PBIND_QUERY;
-  processorid_t obind;
-  r = processor_bind(idtype, id, processorid, &obind);
-  if (r != 0) {
-    if (errno == EFAULT) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EFAULT\n");
-      return 0;
-    } else if (errno == EINVAL) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EINVAL\n");
-      return 0;
-    } else if (errno == EPERM) {
-      fprintf(stderr,"getaffinity_processor_bind: no permission to pbind %d\n",
-	      pid);
-      return 0;
-    } else if (errno == ESRCH) {
-      fprintf(stderr,"getaffinity_processor_bind: no such PID %d\n", pid);
-      return 0;
-    } else {
-      fprintf(stderr,"getaffinity_processor_bind: unknown error %d\n", errno);
-      return 0;
-    }
-  }
-  /* is  obind  a bitmask? or is it just the value of a single CPU index ? */
-  if (obind == PBIND_NONE) {
-    obind = -10;
-  }
-  return obind;
-}
-__GETAFFINITY_PROCESSOR_BIND__
-  my $mask = getaffinity_processor_bind($pid);
+  my $mask = xs_getaffinity_process_bind($pid);
   if ($mask == -10) {
     my $np = getNumCpus();
     if ($np > 0) {
@@ -627,7 +535,7 @@ __GETAFFINITY_PROCESSOR_BIND__
       return 0;
     }
   }
-  _debug("affinity with getaffinity_processor_bind: $mask");
+  _debug("affinity with getaffinity_xs_processor_bind: $mask");
   return _arrayToMask($mask);
 }
 
@@ -675,71 +583,6 @@ sub _getAffinity_with_xs_cpuset_getaffinity {
   return 0 if !defined &xs_getaffinity_cpuset_get_affinity;
   return xs_getaffinity_cpuset_get_affinity($pid);
 }
-
-sub _getAffinity_with_cpuset_getaffinity { # XXX - needs work
-    # This might only be available in FreeBSD >= 8.0
-
-    my ($pid) = @_;
-    return 0 if $^O !~ /bsd/i;
-    return 0 if !_configInlineCode('cpuset_getaffinity',
-				   <<'__CPUSET_GETAFFINITY__');
-/* ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** */
-#include <sys/param.h>
-#include <sys/cpuset.h>
-#include <sched.h>
-#include <stdio.h>
-int getaffinity_cpuset_getaffinity(int pid)
-{
-    cpulevel_t level = CPU_LEVEL_WHICH;
-    cpuwhich_t which = CPU_WHICH_PID;
-    id_t id = (id_t) pid;
-    size_t setsize;
-    cpuset_t cpumask;
-    int i, r, z;
-
-    setsize = sizeof(cpumask);
-    r = cpuset_getaffinity(level, which, id, setsize, &cpumask);
-    if (r != 0) {
-      if (errno == EINVAL) {
-	fprintf(stderr, "cpuset_getaffinity: invalid level/which\n");
-	return 0;
-      } else if (errno == EDEADLK) {
-	fprintf(stderr, "cpuset_getaffinity: EDEADLK encountered\n");
-	return 0;
-      } else if (errno == EFAULT) {
-	fprintf(stderr, "cpuset_getaffinity: EFAULT - invalid cpu mask\n");
-	return 0;
-      } else if (errno == ESRCH) {
-	fprintf(stderr, "cpuset_getaffinity: ESRCH - invalid pid\n");
-	return 0;
-      } else if (errno == ERANGE) {
-	fprintf(stderr, "cpuset_getaffinity: ERANGE - invalid cpusetsize\n");
-	return 0;
-      } else if (errno == EPERM) {
-	fprintf(stderr, "cpuset_getaffinity: EPERM - no permission to get affinity for %d\n", pid);
-	return 0;
-      } else {
-	fprintf(stderr, "cpuset_getaffinity: unknown error %d\n", errno);
-	return 0;
-      }
-    }
-    z = 0;
-    for (i = 0; i < 32; i++) {
-      if (CPU_ISSET(i, &cpumask)) {
-	z |= (1 << i);
-      }
-    }
-    return z;
-}
-
-/* ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** */
-__CPUSET_GETAFFINITY__
-;
-    
-    return getaffinity_cpuset_getaffinity($pid);
-}
-
-
 
 ######################################################################
 
@@ -828,49 +671,6 @@ sub _setAffinity_with_xs_sched_setaffinity {
   return xs_sched_setaffinity_set_affinity($pid,$mask);
 }
 
-sub _setAffinity_with_sched_setaffinity {
-  my ($pid, $mask) = @_;
-  return 0 if $^O ne "linux";
-  return 0 if !_configInlineCode("sched_setaffinity",
-				 <<'__SCHED_SETAFFINITY__');
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <sched.h>
-#include <linux/unistd.h>
-#define MAX_CPU 2
-cpu_set_t sched_setaffinity_set2;
-int sched_setaffinity_set_affinity(int pid, int cpumask)
-{
-    cpu_set_t mask;
-    unsigned int len = sizeof(mask);
-    int i,r;
-
-    CPU_ZERO(&mask);
-    for (i=0; i<16 && i<CPU_SETSIZE; i++) {
-	if (0 != (cpumask & (1 << i))) {
-	    CPU_SET(i, &mask);
-	}
-    }
-    r = sched_setaffinity(pid, len, &mask);
-if (r != 0) {
-    fprintf(stderr,"result: %d %d %s\n", r, errno,
-	    errno==EFAULT ? "EFAULT"
-	    : errno==EINVAL ? "EINVAL"
-	    : errno==EPERM ? "EPERM"
-	    : errno==ESRCH ? "ESRCH":"E_WTF");
-}
-    return !r; /* sched_setaffinity: 0 on success */
-}
-
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-__SCHED_SETAFFINITY__
-  my $result = sched_setaffinity_set_affinity($pid, $mask);
-  _debug("set affinity with sched_setaffinity: $result");
-  return $result;
-}
-
 sub _setAffinity_with_BSD_Process_Affinity {
   my ($pid,$mask) = @_;
   return 0 if $^O !~ /bsd/i;
@@ -888,33 +688,6 @@ sub _setAffinity_with_BSD_Process_Affinity {
   }
 }
 
-sub _setAffinity_with_BSD_Process_Affinity_code { # XXX - needs work
-  my ($pid, $mask) = @_;
-  return 0 if $^O ne "linux";
-  return 0 if !_configInlineCode("bsd_process_affinity_code",
-				 <<'__from_BSD_Process_Affinity__');
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-
-/*
- */
-
-void ___do___nothing___()
-{
-
-    Insert Affinity.xs (properly converted from XS back to C)
-    from BSD::Process::Affinity here.
-
-}
-
-
-
-/** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** **/
-__from_BSD_Process_Affinity__
-  my $result = 0; #sched_setaffinity_set_affinity($pid, $mask);
-  _debug("set affinity with sched_setaffinity: $result");
-  return $result;
-}
-
 sub _setAffinity_with_bindprocessor {
   my ($pid,$mask) = @_;
   return 0 if $^O !~ /aix/i;
@@ -922,94 +695,6 @@ sub _setAffinity_with_bindprocessor {
   my $cmd = _configExternalProgram("bindprocessor");
   carp "not implemented for aix";
   return 0;
-}
-
-sub _setAffinity_with_processor_bind {
-  my ($pid,$mask) = @_;
-  return 0 if $^O !~ /solaris/i;
-  return 0 if !_configInlineCode("setaffinity_processor_bind",
-				 <<'__SETAFFINITY_PROCESSOR_BIND__');
-#include <sys/types.h>
-#include <sys/processor.h>
-#include <sys/procset.h>
-int setaffinity_processor_bind(int pid,int mask)
-{
-  int r,z;
-  idtype_t idtype = P_PID;
-  id_t id = (id_t) pid;
-  processorid_t processorid = (processorid_t) mask;
-  processorid_t obind = (processorid_t) mask;
-  r = processor_bind(idtype, id, processorid, &obind);
-  if (r != 0) {
-    if (errno == EFAULT) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EFAULT\n");
-      return 0;
-    } else if (errno == EINVAL) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EINVAL\n");
-      return 0;
-    } else if (errno == EPERM) {
-      fprintf(stderr,"getaffinity_processor_bind: no permission to pbind %d\n",
-	      pid);
-      return 0;
-    } else if (errno == ESRCH) {
-      fprintf(stderr,"getaffinity_processor_bind: no such PID %d\n", pid);
-      return 0;
-    } else {
-      fprintf(stderr,"getaffinity_processor_bind: unknown error %d\n", errno);
-      return 0;
-    }
-  }
-  return !r;
-}
-int setaffinity_processor_bind_debug(int pid,int mask)
-{
-  int r,z;
-  idtype_t idtype = P_PID;
-  id_t id = (id_t) pid;
-  processorid_t processorid = (processorid_t) mask;
-  processorid_t obind = (processorid_t) mask;
-  fprintf(stderr,"calling processor_bind(%d,%d,%d,&%d)\n",
-	  idtype, id, processorid, obind);
-  r = processor_bind(idtype, id, processorid, &obind);
-  fprintf(stderr,"processor_bind return value: %d\n", r);
-  if (r != 0) {
-    if (errno == EFAULT) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EFAULT\n");
-      return 0;
-    } else if (errno == EINVAL) {
-      fprintf(stderr,"getaffinity_processor_bind: error code EINVAL\n");
-      return 0;
-    } else if (errno == EPERM) {
-      fprintf(stderr,"getaffinity_processor_bind: no permission to pbind %d\n",
-	      pid);
-      return 0;
-    } else if (errno == ESRCH) {
-      fprintf(stderr,"getaffinity_processor_bind: no such PID %d\n", pid);
-      return 0;
-    } else {
-      fprintf(stderr,"getaffinity_processor_bind: unknown error %d\n", errno);
-      return 0;
-    }
-  }
-  return !r;
-}
-int setaffinity_processor_unbind(int pid)
-{
-  return setaffinity_processor_bind(pid, PBIND_NONE);
-}
-__SETAFFINITY_PROCESSOR_BIND__
-  ;
-  my $np = getNumCpus();
-  if ($mask + 1 == 1 << $np) {
-    my $result = setaffinity_processor_unbind($pid);
-    _debug("result from setaffinity_processor_bind: $result");
-    return $result;
-  } else {
-    my @amask = _maskToArray($mask);
-    my $result = setaffinity_processor_bind($pid,$amask[0]);
-    _debug("result from setaffinity_processor_bind: $result");
-    return $result;
-  }
 }
 
 sub _setAffinity_with_xs_processor_bind {
@@ -1085,70 +770,6 @@ sub _setAffinity_with_xs_cpuset_setaffinity {
   return xs_cpuset_set_affinity($pid,$mask);
 }
 
-sub _setAffinity_with_cpuset_setaffinity { # XXY - needs work
-    # This might only be available in FreeBSD >= 8.0
-
-    my ($pid, $mask) = @_;
-    return 0 if $^O !~ /bsd/i;
-    return 0 if !_configInlineCode('cpuset_setaffinity',
-				   <<'__CPUSET_SETAFFINITY__');
-/* ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** */
-#include <sys/param.h>
-#include <sys/cpuset.h>
-#include <sched.h>
-int setaffinity_cpuset_setaffinity(int pid, int mask)
-{
-    cpulevel_t level = CPU_LEVEL_WHICH;
-    cpuwhich_t which = CPU_WHICH_PID;
-    id_t id = (id_t) pid;
-    size_t setsize;
-    cpuset_t cpumask;
-    int i, r;
-
-    setsize = sizeof(cpumask);
-    CPU_ZERO(&cpumask);
-    for (i=0; i<32; i++) {
-	if (mask & (1 << i)) {
-	    CPU_SET(i, &cpumask);
-	}
-    }
-
-    r = cpuset_setaffinity(level, which, id, setsize, &cpumask);
-    if (r != 0) {
-      if (errno == EINVAL) {
-	fprintf(stderr, "cpuset_getaffinity: invalid level/which\n");
-	return 0;
-      } else if (errno == EDEADLK) {
-	fprintf(stderr, "cpuset_getaffinity: EDEADLK encountered\n");
-	return 0;
-      } else if (errno == EFAULT) {
-	fprintf(stderr, "cpuset_getaffinity: EFAULT - invalid cpu mask\n");
-	return 0;
-      } else if (errno == ESRCH) {
-	fprintf(stderr, "cpuset_getaffinity: ESRCH - invalid pid\n");
-	return 0;
-      } else if (errno == ERANGE) {
-	fprintf(stderr, "cpuset_getaffinity: ERANGE - invalid cpusetsize\n");
-	return 0;
-      } else if (errno == EPERM) {
-	fprintf(stderr, "cpuset_getaffinity: EPERM - no permission to get affinity for %d\n", pid);
-	return 0;
-      } else {
-	fprintf(stderr, "cpuset_getaffinity: unknown error %d\n", errno);
-	return 0;
-      }
-    }
-    return !r;
-}
-
-/* ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** ** */
-__CPUSET_SETAFFINITY__
-;
-    
-    return setaffinity_cpuset_setaffinity($pid,$mask);
-}
-
-
 ######################################################################
 
 # configuration code
@@ -1206,40 +827,6 @@ sub _configExternalProgram {
     }
   }
   return $PROGRAM{$program} = 0;
-}
-
-sub _configInlineCode {
-  my ($label, $code, $config) = @_;
-  return 0;
-
-
-  return $INLINE_CODE{$label} if defined $INLINE_CODE{$label};
-  return $INLINE_CODE{$label} = 0 if !_configModule("Inline::C");
-  local $@ = undef;
-  eval<<'__EVAL__';
-_debug("binding C code ",length($code), " bytes, label=$label");
-require Inline;
-_debug("require Inline successful");
-if (defined $config) {
-    _debug("configuration: ", @$config);
-    Inline->import("C", "Config", @$config);
-    _debug("import call with configuration successful");
-}
-_debug("binding code");
-my $z;
-$z = Inline->bind("C" => $code);
-_debug("bind result: $z");
-__EVAL__
-
-  if ($@) {
-    _debug("code \"$label\" was not bound: $@");
-    print STDERR "ERROR IN INLINE CODE: $@\n" if $ENV{INLINE_DEBUG};
-    return $INLINE_CODE{$label} = 0;
-  } else {
-    _debug("code \"$label\" was bound");
-    print STDERR "INLINE CODE \"$label\" was bound\n" if $ENV{INLINE_DEBUG};
-    return $INLINE_CODE{$label} = 1;
-  }
 }
 
 ######################################################################
@@ -1315,7 +902,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 0.90
+Version 0.91
 
 =head1 SYNOPSIS
 
@@ -1529,15 +1116,23 @@ See http://dev.perl.org/licenses/ for more information.
 
 Notes and to do list:
 
+Why worry about CPU affinity? See 
+http://www.ibm.com/developerworks/linux/library/l-affinity.html?ca=dgr-lnxw41Affinity
+Other reasons are:
+    bind expensive processes to subset of CPUs, leaving at least
+    one CPU for other tasks or other users
+
 See http://www.ibm.com/developerworks/aix/library/au-processinfinity.html
 for hints about cpu affinity on AIX
+
+From v0.90, test to get num CPUs failed on Irix.
 
 Rumors of cpu affinity on other systems:
     BSD:  pthread_setaffinity_np(), pthread_getaffinity_np()
           copy XS code from BSD::Resource::Affinity
           FreeBSD:  /cpuset, cpuset_setaffinity(), cpuset_getaffinity()
           NetBSD:   /psrset
-    Irix: /dplace
+    Irix: /dplace, cpusetXXX() methods (with -lcpuset)
     Solaris:  /pbind, /psrset, processor_bind(), pset_bind()
     From //developers.sun.com/solaris/articles/solaris_processor.html
 
@@ -1560,6 +1155,7 @@ Rumors of cpu affinity on other systems:
 	lgrp_affinity_set(P_PID,$pid,$lgrp,LGRP_AFF_xxx)
         lgrp_affinity_get(P_PID,$pid,$lgrp)
         affinity_get
+
     AIX:  /bindprocessor, bindprocessor() in <sys/processor.h>
     MacOS: thread_policy_set(),thread_policy_get() in <mach/thread_policy.h>
 

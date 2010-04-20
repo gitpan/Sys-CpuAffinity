@@ -1,9 +1,9 @@
 use Sys::CpuAffinity;
-use Test::More tests => 8;
+use Test::More tests => 13;
 use strict;
 use warnings;
 
-my $ntests = 8;
+my $ntests = 13;
 
 my $n = Sys::CpuAffinity::getNumCpus();
 ok($n > 0, "discovered $n processors");
@@ -26,10 +26,7 @@ if (defined $pid && $pid == 0) {
   my $y3 = Sys::CpuAffinity::getAffinity($$);
   print F "getAffinity:$y3\n";
 
-  my $r3 = 1 + int(rand() * ((1 << $n) - 1));
-  while ($r3 == $y3) {
-    $r3 = 1 + int(rand() * ((1 << $n) - 1));
-  }
+  my $r3 = getComplexMask($n);
 
   print F "targetAffinity:$r3\n";
   my $z3 = Sys::CpuAffinity::setAffinity($$, $r3);
@@ -43,32 +40,58 @@ if (defined $pid && $pid == 0) {
 }
 
 my $y = Sys::CpuAffinity::getAffinity($$);
-ok($y > 0 && $y < (1 << $n), "got current process affinity $y");
+ok($y > 0 && $y < 2**$n, "got current process affinity $y");
 
-my $r = 1 + int(rand() * ((1 << $n) - 1));
-while ($r == $y) {
-  $r = 1 + int(rand() * ((1 << $n) - 1));
-}
+my $simpleMask = getSimpleMask($n);
+my $clearMask  = getUnbindMask($n);
 
-my $z = Sys::CpuAffinity::setAffinity($$, $r);
-ok($z != 0, "setCpuAffinity returned non-zero");
+my $complexMask = getComplexMask($n);
+
+# set and clear simple mask (bind to one processor)
+
+my $z = Sys::CpuAffinity::setAffinity($$, $simpleMask);
+ok($z != 0, "simple setCpuAffinity returned non-zero");
+
+my $y1 = Sys::CpuAffinity::getAffinity($$);
+ok($y1 == $simpleMask, 
+   "setCpuAffinity set affinity to $y1 == $simpleMask != $y");
+
+$z = Sys::CpuAffinity::setAffinity($$, $clearMask);
+ok($z != 0, "clear simple setCpuAffinity returned non-zero");
 
 my $y2 = Sys::CpuAffinity::getAffinity($$);
-ok($y2 == $r, "setCpuAffinity set affinity to $r == $y2 != $y");
+ok($y2 + 1 == 2**$n, "bind to all processors successful $y2 == ".(2**$n)."-1");
 
-# unbind -- on solaris and with BSD's cpuset this is a different
-# operation than binding to all processors.
+# set and clear complex mask (more than one processor, but less than all)
 
-my $y5 = Sys::CpuAffinity::setAffinity($$, -1);
-my $z5 = Sys::CpuAffinity::getAffinity($$);
-ok($y5 && $z5 && $z5+1 == 1 << $n,
-   "setCpuAffinity(-1) does unbind");
+SKIP: {
+  if ($n < 3) {
+    Sys::CpuAffinity::setAffinity($$, $simpleMask);
+    skip "complex mask test. Need >2 cpus to form complex mask", 2;
+  }
+  $z = Sys::CpuAffinity::setAffinity($$, $complexMask);
+  ok($z != 0, "complex setCpuAffinity returned non-zero");
+
+  my $y3 = Sys::CpuAffinity::getAffinity($$);
+  ok($y3 == $complexMask, 
+     "setCpuAffinity set affinity to $y3 == "
+     . (sprintf "0x%x", $complexMask) . " != $y2");
+}
+
+$z = Sys::CpuAffinity::setAffinity($$, -1);
+ok($z != 0, "setAffinity(-1) returned non-zero");
+
+my $y4 = Sys::CpuAffinity::getAffinity($$);
+ok($y4+1 == 2**$n, "setAffinity(-1) binds to all processors");
+
 
 CORE::wait;
 
-open F, '<', $f;
-print <F>;
-close F;
+if ($ENV{DEBUG}) {
+  open F, '<', $f;
+  print <F>;
+  close F;
+}
 
 
 open F, '<', $f;
@@ -87,6 +110,34 @@ $g = <F>;
 close F;
 unlink $f;
 
-my ($y4) = $g =~ /getAffinity2:(\d+)/;
+($y4) = $g =~ /getAffinity2:(\d+)/;
 ok(defined $y4 && $y4 == $r3,
    "set pseudo-proc affinity to $r3 == $y4 != $y3");
+
+
+sub getSimpleMask {
+  my $n = shift;
+  my $r = int(rand() * $n);
+  return 1 << $r;
+}
+
+sub getComplexMask {
+  my $n = shift;
+  if ($n < 3) {
+    return getSimpleMask($n);
+  }
+  my $s = 1 << ($n - 1);
+  my $r;
+  do {
+    $r = 1 + int(rand(2 * $s - 2));
+  } while ( $r == 0                  # don't want no bits set 
+	   || ($r & ($r-1)) == 0     # don't want one bit set
+	   || ($r+1) == 2**$n );     # don't want all bits set
+  return $r;
+}
+
+sub getUnbindMask {
+  my $n = shift;
+  my $s = 1 << ($n - 1);
+  return 2 * ($s - 1) + 1;
+}

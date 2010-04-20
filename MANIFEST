@@ -5,6 +5,7 @@ Makefile.PL
 README
 contrib/getaffinity_processor_bind.xs
 contrib/contrib.doc
+contrib/cpusetGetCPUCount.xs
 contrib/cpuset_getaffinity.xs
 contrib/cpuset_setaffinity.xs
 contrib/fortytwo.xs
@@ -19,7 +20,10 @@ contrib/fail/foo
 lib/xs/foo
 lib/Sys/CpuAffinity.pm
 t/00-load.t
+t/02-available.t
 t/10-exercise.t
+t/11-exercise-all.t
+t/12-32cpus.t
 t/exercise-all.pl
 t/inventory.pl
 t/recommend.pl

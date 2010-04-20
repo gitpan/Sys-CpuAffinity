@@ -1,5 +1,5 @@
-use lib qw(blib/lib blib/arch);
 use Sys::CpuAffinity;
+use Test::More tests => 1;
 use strict qw(vars subs);
 use warnings;
 
@@ -33,6 +33,8 @@ if ($^O eq "cygwin") {
 }
 
 require "t/inventory.pl";
+
+select STDERR;
 
 EXERCISE_COUNT_NCPUS();
 EXERCISE_GET_AFFINITY();
@@ -69,7 +71,6 @@ sub EXERCISE_SET_AFFINITY {
 
     print "\n\n==================================================\n";
 
-    print "Set affinity =\n";
 
     my $np = Sys::CpuAffinity::getNumCpus();
     my ($TARGET,$LAST_TARGET) = (0,0);
@@ -83,6 +84,7 @@ sub EXERCISE_SET_AFFINITY {
 
     # print "@mask\n";
 
+    print "Set affinity =\n";
 
     for my $technique (inventory::setAffinity()) {
 	my $rr = Sys::CpuAffinity::getAffinity($pid);
@@ -104,3 +106,4 @@ sub EXERCISE_SET_AFFINITY {
     }
 }
 
+ok(1);

@@ -18,9 +18,9 @@ while (<$G>) {
 }
 close $G;
 
-sub inventory::getAffinity { return @GET }
-sub inventory::setAffinity { return @SET }
-sub inventory::getNumCpus { return @NCPUS }
+sub inventory::getAffinity { return sort {lc $a cmp lc $b} @GET }
+sub inventory::setAffinity { return sort {lc $a cmp lc $b} @SET }
+sub inventory::getNumCpus { return sort {lc $a cmp lc $b} @NCPUS }
 
 unless (caller) {
   # running t/inventory.pl as standalone script

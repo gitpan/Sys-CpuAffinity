@@ -112,6 +112,8 @@ my $builder = $builderclass->new(
 	sign                => 0,
 );
 
+# if $^O =~ /irix/, then we want to compile with  -lcpuset
+
 $builder->create_build_script();
 
 __END__
