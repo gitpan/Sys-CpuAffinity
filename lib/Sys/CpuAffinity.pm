@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use base qw(DynaLoader);
 
-our $VERSION = '0.91';
+our $VERSION = '0.92';
 eval { bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
@@ -902,7 +902,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 0.91
+Version 0.92
 
 =head1 SYNOPSIS
 

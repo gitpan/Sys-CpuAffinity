@@ -38,7 +38,14 @@ select STDERR;
 
 EXERCISE_COUNT_NCPUS();
 EXERCISE_GET_AFFINITY();
+if (Sys::CpuAffinity::getNumCpus() <= 1) {
+ SKIP: {
+    skip "set affinity test. Only one processor on this system", 1;
+  }
+  exit 0;
+}
 EXERCISE_SET_AFFINITY();
+ok(1);
 
 
 sub EXERCISE_GET_AFFINITY {
@@ -73,10 +80,12 @@ sub EXERCISE_SET_AFFINITY {
 
 
     my $np = Sys::CpuAffinity::getNumCpus();
+    return 0 if $np <= 1;
+
     my ($TARGET,$LAST_TARGET) = (0,0);
     my @mask = ();
     while (@mask < 500) {
-	$TARGET = int(rand() * ((1 << $np) - 1)) + 1
+	$TARGET = int(rand() * (2**$np - 1)) + 1;
 	    while $TARGET == $LAST_TARGET;
 	$LAST_TARGET = $TARGET;
 	push @mask, $TARGET;
@@ -106,4 +115,3 @@ sub EXERCISE_SET_AFFINITY {
     }
 }
 
-ok(1);
