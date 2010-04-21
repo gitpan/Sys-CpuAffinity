@@ -1,6 +1,6 @@
 Revision history for Sys-CpuAffinity
 
-0.92	2010-04-21
+0.93	2010-04-21
 	Fix infinite loop in t/11 for single-processor systems.
 
 0.91    2010-04-20

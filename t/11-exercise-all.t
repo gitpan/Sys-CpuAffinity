@@ -85,7 +85,7 @@ sub EXERCISE_SET_AFFINITY {
     my ($TARGET,$LAST_TARGET) = (0,0);
     my @mask = ();
     while (@mask < 500) {
-	$TARGET = int(rand() * (2**$np - 1)) + 1;
+	$TARGET = int(rand() * (2**$np - 1)) + 1
 	    while $TARGET == $LAST_TARGET;
 	$LAST_TARGET = $TARGET;
 	push @mask, $TARGET;
