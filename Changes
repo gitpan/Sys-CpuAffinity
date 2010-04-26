@@ -1,5 +1,9 @@
 Revision history for Sys-CpuAffinity
 
+0.94	2010-04-24
+	Bug fix in _configExternalProgram's poor man's which.
+	XS support for Windows/Cygwin if Win32::XXX modules aren't available.
+
 0.93	2010-04-21
 	Fix infinite loop in t/11 for single-processor systems.
 

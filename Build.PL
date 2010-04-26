@@ -9,7 +9,7 @@ use Carp;
 
 my $builderclass = Module::Build->subclass(
 
- class => 'My::Custom::Builder',
+ class => 'Sys::CpuAffinity::Custom::Builder',
  code => <<'__CUSTOM_BUILD_CODE__,',
  sub ACTION_build {
    use File::Copy;
@@ -86,6 +86,19 @@ mkdir 'lib/xs' unless -d 'lib/xs';
 open(FOO, '>>', 'lib/xs/foo') && close FOO unless -f 'lib/xs/foo';
 my $bugtracker_url 
   = 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Sys-CpuAffinity';
+my $extra_compiler_flags = '';
+my $extra_linker_flags = '';
+if ($^O =~ /irix/) {
+  $extra_linker_flags = '-lcpuset';
+}
+if ($^O eq 'MSWin32' || $^O eq 'cygwin') {
+  $extra_compiler_flags = '-lkernel32';
+  $extra_linker_flags = '-lkernel32';
+  if ($^O eq 'cygwin') {
+    $extra_compiler_flags .= ' -L/usr/lib/w32api';
+    $extra_linker_flags .= ' -L/usr/lib/w32api';
+  }
+}
 
 my $builder = $builderclass->new(
 	module_name         => 'Sys::CpuAffinity',
@@ -107,8 +120,12 @@ my $builder = $builderclass->new(
 			         '*.xs.o', 'lib/xs/*', 
 				 'lib/Sys/CpuAffinity.xs',
                                  'contrib/ok/*.xs', 'contrib/fail/*.xs',
+                                 'blib', 'pod2htm*',
+                                 'Makefile', 'Build'
 				 ],
 	create_makefile_pl  => 'passthrough',
+#	extra_compiler_flags => [ '-lkernel32' ],
+#	extra_linker_flags => [ '/usr/lib/w32api/libkernel32.a' ],
 	sign                => 0,
 );
 

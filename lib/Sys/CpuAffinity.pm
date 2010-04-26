@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use base qw(DynaLoader);
 
-our $VERSION = '0.93';
+our $VERSION = '0.94';
 eval { bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
@@ -60,8 +60,7 @@ sub getAffinity {
   my ($pid, %flags) = @_; # %flags reserved for future use
   my $wpid = $pid;
 
-  my $mask = _getAffinity_with_Win32API($wpid)
-    || _getAffinity_with_Win32Process($wpid)
+  my $mask = 0 
     || _getAffinity_with_taskset($pid)
     || _getAffinity_with_xs_sched_getaffinity($pid)
     || _getAffinity_with_xs_processor_bind($pid)
@@ -69,6 +68,9 @@ sub getAffinity {
     || _getAffinity_with_BSD_Process_Affinity($pid)
     || _getAffinity_with_cpuset($pid)
     || _getAffinity_with_pbind($pid)
+    || _getAffinity_with_xs_win32($pid)
+    || _getAffinity_with_Win32Process($wpid)
+    || _getAffinity_with_Win32API($wpid)
     || 0;
 
   return wantarray ? _maskToArray($mask) : $mask;
@@ -112,7 +114,8 @@ sub setAffinity {
     }
   }
 
-  return _setAffinity_with_Win32API($pid,$mask)
+  return 0
+    || _setAffinity_with_Win32API($pid,$mask)
     || _setAffinity_with_Win32Process($pid,$mask)
     || _setAffinity_with_taskset($pid,$mask)
     || _setAffinity_with_xs_sched_setaffinity($pid,$mask)
@@ -123,11 +126,16 @@ sub setAffinity {
     || _setAffinity_with_cpuset($pid,$mask)
     || _setAffinity_with_pbind($pid,$mask)
 #   || _setAffinity_with_psrset($pid,$mask)       # XXX needs proper test env
+    || _setAffinity_with_xs_win32($pid,$mask)
     || 0;
 }
 
+our $_NUM_CPUS_CACHED = 0;
 sub getNumCpus() {
-  return 
+  if ($_NUM_CPUS_CACHED) {
+    return $_NUM_CPUS_CACHED;
+  }
+  return $_NUM_CPUS_CACHED =
        _getNumCpus_from_Win32API()
     || _getNumCpus_from_Win32API_System_Info()
     || _getNumCpus_from_xs_Win32API_System_Info()
@@ -386,12 +394,13 @@ sub _getNumCpus_from_prtconf {    # NOT TESTED
 # get affinity toolbox
 
 sub _getAffinity_with_Win32API {
-  my $pid = shift;
+  my $opid = shift;
   return 0 if $^O ne "MSWin32" && $^O ne "cygwin";
   return 0 if !_configModule("Win32::API");
 
+  my $pid = $opid;
   if ($^O eq "cygwin" && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($pid);
+    $pid = Cygwin::pid_to_winpid($opid);
   }
 
   if ($pid > 0) {
@@ -482,6 +491,7 @@ sub _getAffinity_with_taskset {
   my $taskset = _configExternalProgram("taskset");
   my $taskset_output = qx($taskset -p $pid 2>/dev/null);
   $taskset_output =~ s/\s+$//;
+  _debug("taskset output: $taskset_output");
   return 0 unless $taskset_output;
   my ($mask) = $taskset_output =~ /: (\S+)/;
   _debug("affinity with taskset: $mask");
@@ -509,7 +519,7 @@ sub _getAffinity_with_pbind {
   if ($pbind_output =~ /not bound/) {
     my $np = getNumCpus();
     if ($np > 0) {
-      return (1 << $np) - 1;
+      return (2 ** $np) - 1;
     } else {
       carp "_getAffinity_with_pbind: ",
 	"process $pid unbound but can't count processors\n";
@@ -529,7 +539,7 @@ sub _getAffinity_with_xs_processor_bind {
   if ($mask == -10) {
     my $np = getNumCpus();
     if ($np > 0) {
-      $mask = (1 << $np) - 1;
+      $mask = (2 ** $np) - 1;
       return $mask;
     } else {
       return 0;
@@ -584,6 +594,28 @@ sub _getAffinity_with_xs_cpuset_getaffinity {
   return xs_getaffinity_cpuset_get_affinity($pid);
 }
 
+sub _getAffinity_with_xs_win32 {
+  my ($opid) = @_;
+  my $pid = $opid;
+  if ($^O =~ /cygwin/ && defined &Cygwin::pid_to_winpid) {
+    $pid = Cygwin::pid_to_winpid($opid);
+  }
+  if ($pid < 0) {
+    return 0 if !defined &xs_win32_getAffinity_thread;
+    return xs_win32_getAffinity_thread(-$pid);
+  } elsif ($opid == $$) {
+    if (defined &xs_win32_getAffinity_proc) {
+      return xs_win32_getAffinity_proc($pid);
+    } elsif (defined &xs_win32_getAffinity_thread) {
+      return xs_win32_getAffinity_thread(0);
+    }
+    return 0;
+  } elsif (defined &xs_win32_getAffinity_proc) {
+    return xs_win32_getAffinity_proc($pid);
+  }
+  return 0;
+}
+
 ######################################################################
 
 # set affinity toolbox
@@ -616,7 +648,7 @@ sub _setAffinity_with_Win32API {
     # 0x0200: THREAD_SET_LIMITED_INFORMATION
     my $threadHandle;
     local $! = undef;
-    undef $^E;
+    $^E = '';
     return 0 unless $threadHandle
       = _win32api("OpenThread", 0x0060, 0, -$pid)
 	|| _win32api("OpenThread", 0x0600, 0, -$pid)
@@ -700,7 +732,7 @@ sub _setAffinity_with_bindprocessor {
 sub _setAffinity_with_xs_processor_bind {
   my ($pid,$mask) = @_;
   my $np = getNumCpus();
-  if ($mask + 1 == 1 << $np) {
+  if ($mask + 1 == 2 ** $np) {
     return 0 if !defined &xs_setaffinity_processor_unbind;
     my $result = xs_setaffinity_processor_unbind($pid);
     _debug("result from xs_setaffinity_processor_unbind: $result");
@@ -730,7 +762,7 @@ sub _setAffinity_with_pbind {
 
   my $np = getNumCpus();
   my $c1;
-  if ($np > 0 && $mask + 1 == 1 << $np) {
+  if ($np > 0 && $mask + 1 == 2 ** $np) {
       $c1 = system("'$pbind' -u $pid > /dev/null 2>&1");
   } else {
       my $element = 0;
@@ -770,6 +802,36 @@ sub _setAffinity_with_xs_cpuset_setaffinity {
   return xs_cpuset_set_affinity($pid,$mask);
 }
 
+sub _setAffinity_with_xs_win32 {
+  my ($opid, $mask) = @_;
+  my $pid = $opid;
+  if ($^O =~ /cygwin/) {
+    $pid = Cygwin::pid_to_winpid($opid);
+  }
+
+  if ($pid < 0) {
+    if (defined &xs_win32_setAffinity_thread) {
+      _debug("xs_win32_setAffinity_thread -\$pid");
+      return xs_win32_setAffinity_thread(-$pid,$mask);
+    }
+    return 0;
+  } elsif ($opid == $$) {
+    if (defined &xs_win32_setAffinity_thread) {
+      my $r = xs_win32_setAffinity_thread(0, $mask);
+      return $r if $r;
+    }
+    if (defined &xs_win32_setAffinity_proc) {
+      _debug("xs_win32_setAffinity_proc \$\$");
+      return xs_win32_setAffinity_proc($pid,$mask);
+    }
+    return 0;
+  } elsif (defined &xs_win32_setAffinity_proc) {
+    _debug("xs_win32_setAffinity_proc +\$pid");
+    return xs_win32_setAffinity_proc($pid, $mask);
+  }
+  return 0;
+}
+
 ######################################################################
 
 # configuration code
@@ -806,11 +868,13 @@ sub _configExternalProgram {
     return $PROGRAM{$program} = $program;
   }
 
-  my $which = qx(which $program 2>/dev/null);
-  $which =~ s/\s+$//;
-  if ($which) {
-    _debug("Program $program is available in $which");
-    return $PROGRAM{$program} = $which;
+  if ($^O ne 'MSWin32') {
+    my $which = qx(which $program 2>/dev/null);
+    $which =~ s/\s+$//;
+    if ($which) {
+      _debug("Program $program is available in $which");
+      return $PROGRAM{$program} = $which;
+    }
   }
 
   # poor man's which
@@ -823,7 +887,7 @@ sub _configExternalProgram {
   foreach my $dir (@PATH) {
     if (-x "$dir/$program") {
       _debug("Program $program is available in $dir/$program");
-      $PROGRAM{$program} = "$dir/$program";
+      return $PROGRAM{$program} = "$dir/$program";
     }
   }
   return $PROGRAM{$program} = 0;
@@ -876,10 +940,10 @@ sub _win32api {
 
     local $! = undef;
     $WIN32API{$function} = Win32::API->new(@$spec);
-    _debug("Win32::API function $function: ", $WIN32API{$function});
+    # _debug("Win32::API function $function: ", $WIN32API{$function});
     if ($!) {
-      carp "Sys::CpuAffinity: ",
-	"error initializing Win32::API function $function: $! / $^E\n";
+      # carp "Sys::CpuAffinity: ",
+      #	  "error initializing Win32::API function $function: $! / $^E\n";
       $WIN32API{$function} = 0;
       return;
     }
@@ -902,7 +966,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 0.93
+Version 0.94
 
 =head1 SYNOPSIS
 
