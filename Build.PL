@@ -57,7 +57,7 @@ my $builderclass = Module::Build->subclass(
      unlink <contrib/ok/*.xs>,<contrib/fail/*.xs>,'lib/Sys/CpuAffinity.xs';
      if (@POSTMOD) {
        open my $xs_fh, '>', 'lib/Sys/CpuAffinity.xs' or croak $!;
-       print $xs_fh @INCLUDE, @PREMOD, $MODULE, @POSTMOD;
+       print $xs_fh @INCLUDE, @PREMOD, $MODULE, @POSTMOD, "\n\n\n";
        close $xs_fh;
      }
    }
@@ -86,9 +86,9 @@ mkdir 'lib/xs' unless -d 'lib/xs';
 open(FOO, '>>', 'lib/xs/foo') && close FOO unless -f 'lib/xs/foo';
 my $bugtracker_url 
   = 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Sys-CpuAffinity';
+
 my $extra_compiler_flags = '';
 my $extra_linker_flags = '';
-
 if ($^O =~ /irix/) {
   $extra_linker_flags = '-lcpuset';
 }
@@ -111,18 +111,19 @@ my $builder = $builderclass->new(
 	},
 	add_to_cleanup      => [ 'Sys-CpuAffinity-*', '_build', 
 			         '*.xs.o', 'lib/xs/*', 
+				 'lib/Sys/CpuAffinity.c',
+				 'lib/Sys/CpuAffinity.o',
 				 'lib/Sys/CpuAffinity.xs',
                                  'contrib/ok/*.xs', 'contrib/fail/*.xs',
                                  'blib', 'pod2htm*',
                                  'Makefile', 'Build'
 				 ],
 	create_makefile_pl  => 'passthrough',
-#	extra_compiler_flags => [ '-lkernel32' ],
-#	extra_linker_flags => [ '/usr/lib/w32api/libkernel32.a' ],
-	sign                => 0,
+	extra_compiler_flags => $extra_compiler_flags,
+	extra_linker_flags   => $extra_linker_flags,
+	sign                 => 0,
 );
 
-# if $^O =~ /irix/, then we want to compile with  -lcpuset
 
 $builder->create_build_script();
 

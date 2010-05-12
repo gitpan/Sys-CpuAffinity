@@ -1,6 +1,6 @@
 ---
 name: Sys-CpuAffinity
-version: 0.95
+version: 0.96
 author:
   - "Marty O'Brien <mob@cpan.org>"
 abstract: Set CPU affinity for processes
@@ -16,7 +16,7 @@ recommends:
 provides:
   Sys::CpuAffinity:
     file: lib/Sys/CpuAffinity.pm
-    version: 0.95
+    version: 0.96
 generated_by: Module::Build version 0.280802
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html
