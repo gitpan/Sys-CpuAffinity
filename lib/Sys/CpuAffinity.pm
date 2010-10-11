@@ -4,7 +4,7 @@ use warnings;
 use strict;
 use base qw(DynaLoader);
 
-our $VERSION = '0.96';
+our $VERSION = '0.97';
 eval { bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
@@ -117,17 +117,17 @@ sub setAffinity {
   }
 
   return _setAffinity_with_Win32API($pid,$mask)
+    || _setAffinity_with_xs_win32($pid,$mask)
     || _setAffinity_with_Win32Process($pid,$mask)
     || _setAffinity_with_taskset($pid,$mask)
     || _setAffinity_with_xs_sched_setaffinity($pid,$mask)
     || _setAffinity_with_BSD_Process_Affinity($pid,$mask)
-    || _setAffinity_with_xs_cpuset_setaffinity($pid,$mask) # XXX needs work
+    || _setAffinity_with_xs_cpuset_setaffinity($pid,$mask)  # XXX needs wor
     || _setAffinity_with_xs_processor_bind($pid,$mask)
     || _setAffinity_with_bindprocessor($pid,$mask)
     || _setAffinity_with_cpuset($pid,$mask)
     || _setAffinity_with_pbind($pid,$mask)
-#   || _setAffinity_with_psrset($pid,$mask)       # XXX needs proper test env
-    || _setAffinity_with_xs_win32($pid,$mask)
+#   || _setAffinity_with_psrset($pid,$mask) # XXX needs proper test e
     || 0;
 }
 
@@ -174,12 +174,14 @@ sub _getNumCpus_from_ENV {
 }
 
 sub _getNumCpus_from_Win32API {
-  # GetActiveProcessorCount api function is only supported since Windows 7
+  # GetActiveProcessorCount api function is only supported since Windows 7?
+  # !!! Unfortunately, it also seems to make Windows 7 crash !!!
   return 0 if $^O ne "MSWin32" && $^O ne "cygwin";
   return 0 if !_configModule("Win32::API");
 
   # ALL_PROCESSOR_GROUPS: 0xffff
-  return _win32api("GetActiveProcessorCount", 0xffff) || 0;
+  ### return _win32api("GetActiveProcessorCount", 0xffff) ||
+    0;
 }
 
 our %WIN32_SYSTEM_INFO = ();
@@ -197,6 +199,8 @@ sub _getNumCpus_from_Win32API_System_Info {
         $lpsysinfo_type_avail ? 'LPSYSTEM_INFO' : 'PCHAR';
       $WIN32API{"GetSystemInfo"} = Win32::API->new('kernel32', $proto);
     }
+
+    # does this part break on 64-bit machines?
     my $buffer = chr(0) x 36;
     $WIN32API{"GetSystemInfo"}->Call($buffer);
     ($WIN32_SYSTEM_INFO{"PageSize"},
@@ -435,8 +439,8 @@ sub _getAffinity_with_Win32API {
   return 0 if !_configModule("Win32::API");
 
   my $pid = $opid;
-  if ($^O eq "cygwin" && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($opid);
+  if ($^O eq "cygwin") {
+    $pid = __pid_to_winpid($opid);
   }
 
   if ($pid > 0) {
@@ -506,8 +510,8 @@ sub _getAffinity_with_Win32Process {
   return 0 if !_configModule("Win32::Process");
   return 0 if $pid < 0;  # pseudo-process / thread id
 
-  if ($^O eq "cygwin" && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($pid);
+  if ($^O eq "cygwin") {
+    $pid = __pid_to_winpid($pid);
   }
 
   my ($processHandle, $processMask, $systemMask, $result);
@@ -633,8 +637,8 @@ sub _getAffinity_with_xs_cpuset_getaffinity {
 sub _getAffinity_with_xs_win32 {
   my ($opid) = @_;
   my $pid = $opid;
-  if ($^O =~ /cygwin/ && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($opid);
+  if ($^O =~ /cygwin/) {
+    $pid = __pid_to_winpid($opid);
   }
   if ($pid < 0) {
     return 0 if !defined &xs_win32_getAffinity_thread;
@@ -663,8 +667,8 @@ sub _setAffinity_with_Win32API {
 
   # if $^O is "cygwin", make sure you are passing the Windows pid,
   # using Cygwin::pid_to_winpid if necessary!
-  if ($^O eq "cygwin" && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($pid);
+  if ($^O eq "cygwin") {
+    $pid = __pid_to_winpid($pid);
   }
 
   if ($pid > 0) {
@@ -704,16 +708,23 @@ sub _setAffinity_with_Win32Process {
   my ($pid, $mask) = @_;
   return 0 if $^O ne "MSWin32" && $^O ne "cygwin";
   return 0 if !_configModule("Win32::Process");
-  if ($^O eq "cygwin" && defined &Cygwin::pid_to_winpid) {
-    $pid = Cygwin::pid_to_winpid($pid);
+  if ($^O eq "cygwin") {
+    $pid = __pid_to_winpid($pid);
   }
 
   my $processHandle;
   return 0 unless Win32::Process::Open($processHandle, $pid, 0)
     && ref $processHandle eq 'Win32::Process';
-  my $result = $processHandle->SetProcessAffinityMask($mask);
-  _debug("set affinity with Win32::Process: $result");
-  return $result;
+
+  eval {
+    # Seg fault on Cygwin? We really prefer not to use it on Cygwin.
+    local $SIG{SEGV} = 'IGNORE';
+    return 0 if $^O eq 'cygwin';
+    my $result = $processHandle->SetProcessAffinityMask($mask);
+    _debug("set affinity with Win32::Process: $result");
+    return $result;
+  };
+  return 0;
 }
 
 sub _setAffinity_with_taskset {
@@ -847,7 +858,7 @@ sub _setAffinity_with_xs_win32 {
   my ($opid, $mask) = @_;
   my $pid = $opid;
   if ($^O =~ /cygwin/) {
-    $pid = Cygwin::pid_to_winpid($opid);
+    $pid = __pid_to_winpid($opid);
   }
 
   if ($pid < 0) {
@@ -871,6 +882,30 @@ sub _setAffinity_with_xs_win32 {
     return xs_win32_setAffinity_proc($pid, $mask);
   }
   return 0;
+}
+
+sub __pid_to_winpid {
+  my ($cygwinpid) = @_;
+  if ($] >= 5.008 && defined(&Cygwin::pid_to_winpid)) {
+    return Cygwin::pid_to_winpid($cygwinpid);
+  } else {
+    return __poor_mans_pid_to_winpid($cygwinpid);
+  }
+}
+
+sub __poor_mans_pid_to_winpid {
+  my ($cygwinpid) = @_;
+  my @psw = `/usr/bin/ps -W`;
+  foreach my $psw (@psw) {
+    $psw =~ s/^[A-Z\s]+//;
+    my ($pid,$ppid,$pgid,$winpid) = split /\s+/, $psw;
+    next unless $pid;
+    if ($pid == $cygwinpid) {
+      return $winpid;
+    }
+  }
+  warn "Could not resolve cygwin pid $cygwinpid into winpid.\n";
+  return $cygwinpid;
 }
 
 ######################################################################
@@ -996,7 +1031,7 @@ sub _win32api {
       return;
     }
   }
-  return if !defined $WIN32API{$function} || $WIN32API{$function} == 0;
+  return if !defined($WIN32API{$function}) || $WIN32API{$function} == 0;
   return $WIN32API{$function}->Call(@_);
 }
 
@@ -1014,7 +1049,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 0.96
+Version 0.97
 
 =head1 SYNOPSIS
 
@@ -1101,7 +1136,7 @@ So for example, if a process in an 8-CPU machine
 had affinity for CPU's # 2, 6, and 7, then
 in scalar context, C<getAffinity()> would return
 
-    (1 << 2) || (1 << 6) | (1 << 7) ==> 196
+    (1 << 2) | (1 << 6) | (1 << 7) ==> 196
 
 and in array context, it would return
 
@@ -1304,4 +1339,9 @@ by default.
 
 Some systems have a concept of the maximum number of processors that
 they can suppport.
+
+Currently (0.91-0.97), constant parameters to Win32 API functions are 
+hard coded, not extracted from the local header files. Microsoft is
+probably loathe to change these constants between different versions,
+but this still seems dodgy.
 

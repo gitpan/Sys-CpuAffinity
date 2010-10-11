@@ -1,5 +1,10 @@
 Revision history for Sys-CpuAffinity
 
+0.97    2010-10-11
+        Cygwin::pid_to_winpid hack for Perl < v5.10.
+        Disable Win32 GetActiveProcessorCount call, which always either
+        fails quietly or fails noisily.
+
 0.96	2010-05-06
 	Test fix for solaris. Fix parsing negative which output on
 	some platforms.

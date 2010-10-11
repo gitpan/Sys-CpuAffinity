@@ -1,4 +1,4 @@
-Sys-CpuAffinity v0.96
+Sys-CpuAffinity v0.97
 =====================
 
 The Sys::CpuAffinity module seeks to "do one thing and do it well":
@@ -52,6 +52,10 @@ installed on your system. Then you may run the following commands:
 	./Build
 	./Build test
 	./Build install
+
+If you need to rebuild the module, or install it for several
+different version of Perl, it is recommended that you also
+"./Build clean" before each new installation.
 
 SUPPORT AND DOCUMENTATION
 

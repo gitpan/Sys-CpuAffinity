@@ -14,6 +14,7 @@ my $builderclass = Module::Build->subclass(
  sub ACTION_build {
    use File::Copy;
    my $self = shift;
+   my @successfully_compiled;
 
    ### STEP 1: Try to compile each .xs file in ./contrib/ ###
    if (!glob("contrib/fail/*.xs") && ! -f 'lib/Sys/CpuAffinity.xs') {
@@ -29,9 +30,25 @@ my $builderclass = Module::Build->subclass(
            File::Copy::move($xs_file, "contrib/fail/");
        } else {
            print "\n\nSuccessfully compiled $xs_file\n\n";
+           push @successfully_compiled, $xs_file;
            File::Copy::move($xs_file, "contrib/ok/");
        }
        unlink <lib/xs/*>;
+     }
+     if (@successfully_compiled == 0) {
+       warn q[
+None of the XS code snippets successfully compiled.
+Perhaps you don't have a compiler on your system, or
+perhaps it is not configured correctly.
+
+On some systems and configuration, this module might
+still work without any XS code, so let's not worry
+about this just yet.
+];
+     } else {
+       print "Successfully compiled:\n\n\t";
+       print join "\n\t", @successfully_compiled;
+       print "\n\n";
      }
    }
 
@@ -54,6 +71,7 @@ my $builderclass = Module::Build->subclass(
        close $xs_fh;
        print "Incorporating $xs into lib/Sys/CpuAffinity.xs\n";
      }
+     print "\n";
      unlink <contrib/ok/*.xs>,<contrib/fail/*.xs>,'lib/Sys/CpuAffinity.xs';
      if (@POSTMOD) {
        open my $xs_fh, '>', 'lib/Sys/CpuAffinity.xs' or croak $!;
@@ -115,6 +133,7 @@ my $builder = $builderclass->new(
 				 'lib/Sys/CpuAffinity.o',
 				 'lib/Sys/CpuAffinity.xs',
                                  'contrib/ok/*.xs', 'contrib/fail/*.xs',
+                                 'libcompilet*.def', 'ipc.*',
                                  'blib', 'pod2htm*',
                                  'Makefile', 'Build'
 				 ],

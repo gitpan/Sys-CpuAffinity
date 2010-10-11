@@ -2,6 +2,7 @@ use Sys::CpuAffinity;
 use Test::More tests => 1;
 use strict qw(vars subs);
 use warnings;
+$| = 1;
 
 #
 # Exercise all of the methods in the toolbox to
@@ -29,7 +30,7 @@ my ($pid,$wpid);
 
 $wpid = $pid = $$;
 if ($^O eq "cygwin") {
-  $wpid = Cygwin::pid_to_winpid($pid);
+  $wpid = Sys::CpuAffinity::__pid_to_winpid($pid);
 }
 
 require "t/inventory.pl";
@@ -37,6 +38,7 @@ require "t/inventory.pl";
 select STDERR;
 
 EXERCISE_COUNT_NCPUS();
+
 my $n = Sys::CpuAffinity::getNumCpus();
 if ($n <= 1) {
  SKIP: {
@@ -48,6 +50,7 @@ if ($n <= 1) {
   }
   exit 0;
 }
+
 EXERCISE_GET_AFFINITY();
 EXERCISE_SET_AFFINITY();
 ok(1);
@@ -74,7 +77,7 @@ sub EXERCISE_COUNT_NCPUS {
 
     for my $technique (inventory::getNumCpus()) {
 	my $s = 'Sys::CpuAffinity::_getNumCpus_from_' . $technique;
-	printf "    %-25s - %d -\n", $technique, $s->();
+	printf "    %-25s - %d -\n", $technique, eval { $s->() } || 0;
     }
 
 }
