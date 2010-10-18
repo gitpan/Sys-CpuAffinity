@@ -15,6 +15,7 @@ my $builderclass = Module::Build->subclass(
    use File::Copy;
    my $self = shift;
    my @successfully_compiled;
+   my $DEBUG = $ENV{DEBUG};
 
    ### STEP 1: Try to compile each .xs file in ./contrib/ ###
    if (!glob("contrib/fail/*.xs") && ! -f 'lib/Sys/CpuAffinity.xs') {
@@ -27,6 +28,7 @@ my $builderclass = Module::Build->subclass(
        eval { $self->ACTION_code() };
        if ($@) {
            print "\n\nFailed to compile $xs_file\n\n";
+           print "$@\n" if $DEBUG;
            File::Copy::move($xs_file, "contrib/fail/");
        } else {
            print "\n\nSuccessfully compiled $xs_file\n\n";
@@ -105,6 +107,7 @@ open(FOO, '>>', 'lib/xs/foo') && close FOO unless -f 'lib/xs/foo';
 my $bugtracker_url 
   = 'http://rt.cpan.org/NoAuth/Bugs.html?Dist=Sys-CpuAffinity';
 
+
 my $extra_compiler_flags = '';
 my $extra_linker_flags = '';
 if ($^O =~ /irix/) {
@@ -133,9 +136,10 @@ my $builder = $builderclass->new(
 				 'lib/Sys/CpuAffinity.o',
 				 'lib/Sys/CpuAffinity.xs',
                                  'contrib/ok/*.xs', 'contrib/fail/*.xs',
-                                 'libcompilet*.def', 'ipc.*',
+                                 'lib*.def', 'ipc.*',
                                  'blib', 'pod2htm*',
-                                 'Makefile', 'Build'
+                                 'Makefile', 'Build',
+                                 'perl*.stackdump',
 				 ],
 	create_makefile_pl  => 'passthrough',
 	extra_compiler_flags => $extra_compiler_flags,

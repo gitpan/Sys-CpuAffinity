@@ -4,8 +4,10 @@ use warnings;
 use strict;
 use base qw(DynaLoader);
 
-our $VERSION = '0.97';
-eval { bootstrap Sys::CpuAffinity $VERSION };
+our $VERSION = '0.98';
+our $DEBUG = $ENV{DEBUG} || 0;
+eval { };
+{ bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
 }
@@ -574,8 +576,8 @@ sub _getAffinity_with_pbind {
 
 sub _getAffinity_with_xs_processor_bind {
   my ($pid) = @_;
-  return 0 if !defined &xs_getaffinity_process_bind;
-  my $mask = xs_getaffinity_process_bind($pid);
+  return 0 if !defined &xs_getaffinity_processor_bind;
+  my $mask = xs_getaffinity_processor_bind($pid);
   if ($mask == -10) {
     my $np = getNumCpus();
     if ($np > 0) {
@@ -667,14 +669,22 @@ sub _setAffinity_with_Win32API {
 
   # if $^O is "cygwin", make sure you are passing the Windows pid,
   # using Cygwin::pid_to_winpid if necessary!
+
   if ($^O eq "cygwin") {
     $pid = __pid_to_winpid($pid);
+    if ($DEBUG) {
+      print STDERR "winpid is $pid ($_[0])\n";
+    }
   }
 
   if ($pid > 0) {
     my $processHandle;
     # 0x0200 - PROCESS_SET_INFORMATION
-    return 0 unless $processHandle = _win32api("OpenProcess", 0x0200,0,$pid);
+    $processHandle = _win32api("OpenProcess", 0x0200,0,$pid);
+    if ($DEBUG) {
+      print STDERR "process handle: $processHandle\n";
+    }
+    return 0 unless $processHandle;
     my $result = _win32api("SetProcessAffinityMask", $processHandle, $mask);
     _debug("set affinity with Win32::API: $result");
     return $result;
@@ -708,23 +718,49 @@ sub _setAffinity_with_Win32Process {
   my ($pid, $mask) = @_;
   return 0 if $^O ne "MSWin32" && $^O ne "cygwin";
   return 0 if !_configModule("Win32::Process");
+
+  $DB::single = 1;
+
   if ($^O eq "cygwin") {
     $pid = __pid_to_winpid($pid);
+
+    if ($DEBUG) {
+      print STDERR "cygwin pid $_[0] => winpid $pid\n";
+    }
   }
 
   my $processHandle;
   return 0 unless Win32::Process::Open($processHandle, $pid, 0)
     && ref $processHandle eq 'Win32::Process';
 
-  eval {
-    # Seg fault on Cygwin? We really prefer not to use it on Cygwin.
-    local $SIG{SEGV} = 'IGNORE';
-    return 0 if $^O eq 'cygwin';
-    my $result = $processHandle->SetProcessAffinityMask($mask);
-    _debug("set affinity with Win32::Process: $result");
-    return $result;
-  };
-  return 0;
+  # Seg fault on Cygwin? We really prefer not to use it on Cygwin.
+  local $SIG{SEGV} = 'IGNORE';
+
+  # SetProcessAffinityMask: "only available on Windows NT"
+  use Config;
+  my $v = $Config{osvers};
+  if ($^O eq 'MSWin32' && ($v < 3.51 || $v >= 6.0)) {
+    if ($DEBUG) {
+      print STDERR "SetProcessAffinityMask ",
+	"not available on MSWin32 osvers $v?\n";
+    }
+    return 0;
+  }
+  # Don't trust Strawberry Perl $Config{osvers}. Win32::GetOSVersion
+  # is more reliable if it is available.
+  if (_configModule('Win32')) {
+    if (!Win32::IsWinNT()) {
+      if ($DEBUG) {
+	print STDERR "SetProcessorAffinityMask ",
+	  "not available on MSWin32 OS Version $v\n";
+      }
+      return 0;
+    }
+  }
+
+  my $result = $processHandle->SetProcessAffinityMask($mask);
+  _debug("set affinity with Win32::Process: $result");
+  return $result;
 }
 
 sub _setAffinity_with_taskset {
@@ -786,7 +822,7 @@ sub _setAffinity_with_xs_processor_bind {
     return $result;
   } else {
     my @amask = _maskToArray($mask);
-    return 0 if !defined &xs_setaffinity_process_bind;
+    return 0 if !defined &xs_setaffinity_processor_bind;
 
     # solaris processor_bind() is for binding to a single processor.
     # see comment under _setAffinity_with_pbind().
@@ -856,6 +892,9 @@ sub _setAffinity_with_xs_cpuset_setaffinity {
 
 sub _setAffinity_with_xs_win32 {
   my ($opid, $mask) = @_;
+
+$DB::single = 1;
+
   my $pid = $opid;
   if ($^O =~ /cygwin/) {
     $pid = __pid_to_winpid($opid);
@@ -868,13 +907,18 @@ sub _setAffinity_with_xs_win32 {
     }
     return 0;
   } elsif ($opid == $$) {
-    if (defined &xs_win32_setAffinity_thread) {
+
+    if ($^O ne 'cygwin' && defined &xs_win32_setAffinity_thread) {
       my $r = xs_win32_setAffinity_thread(0, $mask);
       return $r if $r;
     }
     if (defined &xs_win32_setAffinity_proc) {
       _debug("xs_win32_setAffinity_proc \$\$");
       return xs_win32_setAffinity_proc($pid,$mask);
+    }
+    if ($^O eq 'cygwin' && defined &xs_win32_setAffinity_thread) {
+      my $r = xs_win32_setAffinity_thread(0, $mask);
+      return $r if $r;
     }
     return 0;
   } elsif (defined &xs_win32_setAffinity_proc) {
@@ -912,7 +956,6 @@ sub __poor_mans_pid_to_winpid {
 
 # configuration code
 
-our $DEBUG = $ENV{DEBUG} || 0;
 sub _debug {
   return if !$DEBUG;
   print STDERR "Sys::CpuAffinity: ",@_,"\n";
@@ -950,6 +993,7 @@ sub _configExternalProgram {
 
     if ($which =~ / not in / 			# negative output on irix
 	|| $which =~ /no \Q$program\E in /	# negative output on solaris
+	|| $which =~ /Command not found/        # negative output on openbsd
        ) {
 
       $which = '';
@@ -1049,7 +1093,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 0.97
+Version 0.98
 
 =head1 SYNOPSIS
 
@@ -1340,8 +1384,13 @@ by default.
 Some systems have a concept of the maximum number of processors that
 they can suppport.
 
-Currently (0.91-0.97), constant parameters to Win32 API functions are 
+Currently (0.91-0.98), constant parameters to Win32 API functions are 
 hard coded, not extracted from the local header files. Microsoft is
 probably loathe to change these constants between different versions,
 but this still seems dodgy.
 
+
+##########################################
+
+Cygwin: if Win32::API is not installed and setCpuAffinity doesn't work,
+recommend Win32::API
