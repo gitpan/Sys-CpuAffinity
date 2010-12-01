@@ -162,6 +162,12 @@ sub recommend {
     push @recommendations, "the  Win32  module";
     push @recommendations, "the  Win32::API  module";
     push @recommendations, "the  Win32::Process  module";
+  } elsif ($sys =~ /openbsd/i) {
+    @recommendations = ();
+    print "OpenBSD does not provide (as far as I can tell)\n";
+    print "a way to manipulate the CPU affinities of processes.\n";
+    print "\n\n==========================================\n\n\n";
+    return;
   } elsif ($sys =~ /bsd/i) {
     push @recommendations, "the  BSD::Process::Affinity  module";
     push @recommendations, "make sure the  cpuset  program is in the PATH";

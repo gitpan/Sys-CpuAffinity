@@ -1,4 +1,4 @@
-Sys-CpuAffinity v0.98
+Sys-CpuAffinity v0.99
 =====================
 
 The Sys::CpuAffinity module seeks to "do one thing and do it well":
@@ -30,9 +30,9 @@ for more systems in future releases. See the NOTE TO
 DEVELOPERS in the module's perldoc for information about 
 how you can help.
 
-MacOS is explicitly not supported, as there does not appear to
-be any public interface for specifying the CPU affinity of
-a process directly.
+MacOS and OpenBSD are explicitly not supported, as there does
+not appear to be any public interface for specifying the CPU 
+affinity of a process directly on these platforms.
 
 
 RECOMMENDED MODULES
