@@ -23,17 +23,16 @@ fprintf(stderr,"getaffinity1\n");
   z = sched_getaffinity((pid_t) pid, CPU_SETSIZE, sched_getaffinity_set1);
 fprintf(stderr,"getaffinity2\n");
   if (z) {
-fprintf(stderr,"getaffinity3\n");
+fprintf(stderr,"getaffinity3 z=%d\n", z);
     return 0;
-fprintf(stderr,"getaffinity4\n");
   }
 fprintf(stderr,"getaffinity5\n");
   for (i = r = 0; i < CPU_SETSIZE && i < 32; i++) {
-fprintf(stderr,"getaffinity6\n");
+fprintf(stderr,"getaffinity6 i=%d r=%d\n", i, r);
    if (CPU_ISSET(i, &sched_getaffinity_set2)) {
 fprintf(stderr,"getaffinity7\n");
       r |= 1 << i;
-fprintf(stderr,"getaffinity8\n");
+fprintf(stderr,"getaffinity8 r=%d\n", r);
     }
 fprintf(stderr,"getaffinity9\n");
   }
@@ -64,7 +63,27 @@ int
 xs_sched_getaffinity_get_affinity(pid)
 int pid
     CODE:
+	/*
+	 * Get process CPU affinity on Linux. 
+	 * This function crashes sometimes, and I'm not sure why.
+	 *
+	 *     http://www.cpantesters.org/cpan/report/19110588-fd0a-11df-9d3f-7066b0d14a89
+	 */
 	RETVAL = sched_getaffinity_get_affinity_no_debug(pid);
     OUTPUT:
 	RETVAL
+
+
+int
+xs_sched_getaffinity_get_affinity_debug(pid)
+int pid
+    CODE:
+	RETVAL = sched_getaffinity_get_affinity_debug(pid);
+    OUTPUT:
+	RETVAL
+
+
+
+
+
 

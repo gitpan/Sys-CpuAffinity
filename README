@@ -1,4 +1,4 @@
-Sys-CpuAffinity v0.99
+Sys-CpuAffinity v1.00
 =====================
 
 The Sys::CpuAffinity module seeks to "do one thing and do it well":
@@ -84,7 +84,7 @@ You can also look for information at:
 
 LICENSE AND COPYRIGHT
 
-Copyright (c) 2010, Marty O'Brien
+Copyright (c) 2010-2011, Marty O'Brien
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published

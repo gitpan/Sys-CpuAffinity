@@ -39,6 +39,7 @@ xs_sched_setaffinity_set_affinity(pid,mask)
 	int pid
 	int mask
     CODE:
+	/* Set process affinity on Linux. */
 	RETVAL = sched_setaffinity_set_affinity(pid,mask);
     OUTPUT:
 	RETVAL
