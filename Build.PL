@@ -74,6 +74,7 @@ on this platform generally
 ;
 }
 print "\n";
+unlink "lib/Sys/CpuAffinity.xs";
 
 
 #############################################################################

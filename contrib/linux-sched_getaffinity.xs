@@ -19,11 +19,22 @@ int sched_getaffinity_get_affinity_debug(int pid)
   int i, r, z;
 fprintf(stderr,"getaffinity0\n");
   sched_getaffinity_initialize();
-fprintf(stderr,"getaffinity1\n");
+fprintf(stderr,"getaffinity1 pid=%d size=%d cpuset=0x%d\n",
+               (int) pid, (int) CPU_SETSIZE, (int) sched_getaffinity_set1);
+
+  /*
+   * Intermittent failure point is here.
+   *
+   * CPU affinity system calls were introduced in the Linux kernel 2.5.8,
+   * glibc library interfaces were introduced in glibc 2.3.
+   * The  cpusetsize  argument was removed in glibc 2.3.2 and restored 
+   * in 2.3.4.
+   */
+
   z = sched_getaffinity((pid_t) pid, CPU_SETSIZE, sched_getaffinity_set1);
 fprintf(stderr,"getaffinity2\n");
   if (z) {
-fprintf(stderr,"getaffinity3 z=%d\n", z);
+fprintf(stderr,"getaffinity3 z=%d err=%d\n", z, errno);
     return 0;
   }
 fprintf(stderr,"getaffinity5\n");
@@ -41,7 +52,6 @@ fprintf(stderr,"getaffinitya\n");
 }
 int sched_getaffinity_get_affinity_no_debug(int pid)
 {
-  /* infinite loop when there is only 1 cpu? */
   int i, r, z;
   sched_getaffinity_initialize();
   z = sched_getaffinity((pid_t) pid, CPU_SETSIZE, sched_getaffinity_set1);
@@ -67,7 +77,7 @@ int pid
 	 * Get process CPU affinity on Linux. 
 	 * This function crashes sometimes, and I'm not sure why.
 	 *
-	 *     http://www.cpantesters.org/cpan/report/19110588-fd0a-11df-9d3f-7066b0d14a89
+	 *     http://www.cpantesters.org/cpan/report/5bbdfcbe-6651-11e0-b483-457e42987c1d
 	 */
 	RETVAL = sched_getaffinity_get_affinity_no_debug(pid);
     OUTPUT:

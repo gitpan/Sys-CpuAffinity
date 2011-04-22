@@ -1,5 +1,10 @@
 Revision history for Sys-CpuAffinity
 
+1.01	2011-04-21
+	XS fixes for FreeBSD.
+	Improved several techniques for counting CPUs.
+	Refactoring of some MSWin32 techniques.
+
 1.00	2011-04-13
 	Fix for setting affinity of MSWin32 child processes.
 	XS support for NetBSD, get/set affinity of calling process.

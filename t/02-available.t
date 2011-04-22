@@ -22,6 +22,10 @@ if (@xs) {
 
 foreach my $module (qw(Win32::API Win32::Process BSD::Process::Affinity)) {
   my $avail = Sys::CpuAffinity::_configModule($module);
+  if ($avail) {
+    no warnings 'uninitialized';
+    $avail .= eval "\$$module" . "::VERSION";
+  }
   print STDERR "module $module: ", ($avail || "not"), " available\n";
 }
 

@@ -8,39 +8,12 @@ use base qw(DynaLoader);
 ## no critic (DotMatch,LineBoundary,Sigils,Punctuation,Quotes,Magic,Checked)
 ## no critic (NamingConventions::Capitalization,BracedFileHandle)
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 our $DEBUG = $ENV{DEBUG} || 0;
 eval { bootstrap Sys::CpuAffinity $VERSION };
 
 sub import {
 }
-
-sub _maskToArray {
-  my ($mask) = @_;
-  my @mask = ();
-  my $i = 0;
-  while ($mask > 0) {
-    if ($mask & 1) {
-      push @mask, $i;
-    }
-    $i++;
-    $mask >>= 1;
-  }
-  return @mask;
-}
-
-sub _arrayToMask {
-  my @procs = @_;
-  my $mask = 0;
-  for my $proc (@procs) {
-    $mask |= 2 ** $proc;
-  }
-  return $mask;
-}
-
-# does 1<<32 equal 1 or 4294967296 on this system?
-# when it's 1, we need to say 2**$np instead of 1<<$np
-
 
 #
 # Development guide:
@@ -96,16 +69,16 @@ sub getAffinity {
   return wantarray ? _maskToArray($mask) : $mask;
 }
 
-sub setAffinity {
-  my ($pid, $mask, %flags) = @_; # %flags reserved for future use
+sub _sanitize_set_affinity_args {
+  my ($pid,$mask) = @_;
+
+  return if ! $pid;
   if (ref $mask eq 'ARRAY') {
     $mask = _arrayToMask(@$mask);
   }
   my $np = getNumCpus();
-  if ($mask == -1) {
-    if ($np > 0) {
-      $mask = (2 ** $np) - 1;
-    }
+  if ($mask == -1 && $np > 0) {
+    $mask = (2 ** $np) - 1;
   }
   if ($mask <= 0) {
     carp "Sys::CpuAffinity: invalid mask $mask in call to setAffinty\n";
@@ -128,6 +101,14 @@ sub setAffinity {
       $mask = $newmask;
     }
   }
+  $_[1] = $mask;
+  return 1;
+}
+
+sub setAffinity {
+  my ($pid, $mask, %flags) = @_; # %flags reserved for future use
+
+  return 0 if ! _sanitize_set_affinity_args($pid, $mask);
 
   return _setAffinity_with_Win32API($pid,$mask)
     || _setAffinity_with_xs_win32($pid,$mask)
@@ -323,10 +304,22 @@ sub _getNumCpus_from_dmesg_bsd {
     #       FreeBSD/SMP: Multiprocessor System Detected: 2 CPUs
     #
     # so we'll go with that.
+    #
+    # on NetBSD, the message is:
+    #
+    #       cpu3 at mainbus0 apid 3: AMD 686-class, 1975MHz, id 0x100f53
 
+    # try FreeBSD format
     my @d = grep { /Multiprocessor System Detected:/i } @dmesg;
-    return 0 if @d == 0;
-    my ($ncpus) = $d[0] =~ /Detected: (\d+) CPUs/i;
+    my $ncpus;
+    if (@d > 0) {
+      ($ncpus) = $d[0] =~ /Detected: (\d+) CPUs/i;
+    }
+
+    # try NetBSD format. This will also probably work for OpenBSD.
+    if (!$ncpus) {
+      $ncpus = grep { /^cpu\d+ at / } @dmesg;
+    }
     return $ncpus || 0;
 }
 
@@ -362,7 +355,7 @@ sub _getNumCpus_from_sysctl {
     return 0 if !_configExternalProgram('sysctl');
     my $cmd = _configExternalProgram('sysctl');
     my @sysctl = qx($cmd -a 2> /dev/null);
-    my @results = grep { /^hw.ncpu[:=]/ } @sysctl;
+    my @results = grep { /^hw.ncpu\s*[:=]/ } @sysctl;
     return 0 if @results == 0;
     my ($ncpus) = $results[0] =~ /[:=]\s*(\d+)/;
 
@@ -391,11 +384,29 @@ sub _getNumCpus_from_hinv {   # NOT TESTED irix
   return 0 if !_configExternalProgram('hinv');
   my $cmd = _configExternalProgram('hinv');
 
+  # 1.01: debug
+  if ($Sys::CpuAffinity::IS_TEST && !$Sys::CpuAffinity::HINV_CALLED++) {
+    print STDERR "$cmd output:\n";
+    print STDERR qx($cmd);
+    print STDERR "\n\n";
+    print STDERR "$cmd -c processor output:\n";
+    print STDERR qx($cmd -c processor);
+    print STDERR "\n\n";
+  }
+
+
   # found this in Test::Smoke::SysInfo v0.042 in Test-Smoke-1.43 module
   my @processor = qx($cmd -c processor 2> /dev/null);
   _debug('"hinv -c processor" output: ', @processor);
   my ($cpu_cnt) = grep { /\d+.+processors?$/i } @processor;
   my $ncpu = (split ' ', $cpu_cnt)[0];
+
+  if ($ncpu == 0) {
+    # there might be output like:
+    # PU 30 at Module 001c35/Slot 0/Slice C: 400 Mhz MIPS R12000 Processor...
+    $ncpu = grep { /^CPU / } @processor;
+  }
+
   return $ncpu;
 }
 
@@ -454,22 +465,6 @@ sub _getNumCpus_from_Test_Smoke_SysInfo {   # NOT TESTED
 
 ######################################################################
 
-sub __pdword_ptr_to_int {
-
-  # convert a binary representation of a Windows DWORD (64-bit integer)
-  # to a scalar value
-
-  # XXX - must be an easy way to do this with  unpack
-
-  my $val = shift;
-  my $int = 0;
-  foreach my $char (split //, $val) {
-    $int <<= 8;
-    $int += ord $char;
-  }
-  return $int;
-}
-
 # get affinity toolbox
 
 sub _getAffinity_with_Win32API {
@@ -480,105 +475,142 @@ sub _getAffinity_with_Win32API {
   my $pid = $opid;
   if ($^O eq 'cygwin') {
     $pid = __pid_to_winpid($opid);
-    return 0 if !defined $pid;
+    # return 0 if !defined $pid;
   }
+  return 0 if !$pid;
 
   if ($pid > 0) {
-    my ($processHandle, $processMask, $systemMask);
-    ($processMask, $systemMask) = (0,0);
 
-    # 0x0400 - PROCESS_QUERY_INFORMATION,
-    # 0x1000 - PROCESS_QUERY_LIMITED_INFORMATION
-    $processHandle = _win32api('OpenProcess',0x0400,0,$pid)
-      || _win32api('OpenProcess',0x1000,0,$pid);
-    return 0 if ! $processHandle;
-    return 0 if ! _win32api('GetProcessAffinityMask', $processHandle,
-                          $processMask, $systemMask);
+    return _getProcessAffinity_with_Win32API($pid);
 
-    my $mask = __pdword_ptr_to_int($processMask);
-    _debug("affinity with Win32::API: $mask");
-    return $mask;
   } else { # $pid is a Windows pseudo-process (thread ID)
 
-    my ($threadHandle);
+    return _getThreadAffinity_with_Win32API(-$pid);
 
-    # 0x0020: THREAD_QUERY_INFORMATION
-    # 0x0400: THREAD_QUERY_LIMITED_INFORMATION
-    # 0x0040: THREAD_SET_INFORMATION
-    # 0x0200: THREAD_SET_LIMITED_INFORMATION
-    $threadHandle = _win32api('OpenThread', 0x0060, 0, -$pid)
-        || _win32api('OpenThread', 0x0600, 0, -$pid)
-        || _win32api('OpenThread', 0x0020, 0, -$pid)
-        || _win32api('OpenThread', 0x0400, 0, -$pid);
-    if (! $threadHandle) {
-      return 0;
-    }
+  }
 
+}
 
-    # The Win32 API does not have a  GetThreadAffinityMask  function.
-    # SetThreadAffinityMask  will return the previous affinity,
-    # but then you have to call it again to restore the original affinity.
-    # Also, SetThreadAffinityMask won't work if you don't have permission
-    # to change the affinity.
+sub _getProcessAffinity_with_Win32API {
+  my $pid = shift;
+  my ($processMask, $systemMask, $processHandle) = (0,0);
 
-    # SetThreadAffinityMask argument has to be compatible with
-    # process affinity, so get process affinity.
+  # 0x0400 - PROCESS_QUERY_INFORMATION,
+  # 0x1000 - PROCESS_QUERY_LIMITED_INFORMATION
+  $processHandle = _win32api('OpenProcess',0x0400,0,$pid)
+                || _win32api('OpenProcess',0x1000,0,$pid);
+  return 0 if ! $processHandle;
+  return 0 if ! _win32api('GetProcessAffinityMask', $processHandle,
+                          $processMask, $systemMask);
 
-    my ($processMask, $systemMask) = (0,0);
-    my $cpid = _win32api('GetCurrentProcessId');
-    my $processHandle
+  my $mask = _unpack_Win32_mask($processMask);
+  _debug("affinity with Win32::API: $mask");
+  return $mask;
+}
+
+sub _getThreadAffinity_with_Win32API {
+  my $thrid = shift;
+  my ($processMask, $systemMask, $threadHandle) = (0,0);
+
+  # 0x0020: THREAD_QUERY_INFORMATION
+  # 0x0400: THREAD_QUERY_LIMITED_INFORMATION
+  # 0x0040: THREAD_SET_INFORMATION
+  # 0x0200: THREAD_SET_LIMITED_INFORMATION
+  $threadHandle = _win32api('OpenThread', 0x0060, 0, $thrid)
+        || _win32api('OpenThread', 0x0600, 0, $thrid)
+        || _win32api('OpenThread', 0x0020, 0, $thrid)
+        || _win32api('OpenThread', 0x0400, 0, $thrid);
+  if (! $threadHandle) {
+    return 0;
+  }
+
+  # The Win32 API does not have a  GetThreadAffinityMask  function.
+  # SetThreadAffinityMask  will return the previous affinity,
+  # but then you have to call it again to restore the original affinity.
+  # Also, SetThreadAffinityMask won't work if you don't have permission
+  # to change the affinity.
+
+  # SetThreadAffinityMask argument has to be compatible with
+  # process affinity, so get process affinity.
+
+  # XXX - this function only works for threads that are contained
+  #       by the current process, and that should cover the vast
+  #       majority of use cases of this module. But how would you
+  #       get the process id of an arbitrary Win32 thread?
+  my $cpid = _win32api('GetCurrentProcessId');
+
+  my $processHandle
       = _win32api('OpenProcess', 0x0400, 0, $cpid)
-        || _win32api('OpenProcess', 0x1000, 0, $cpid);
+     || _win32api('OpenProcess', 0x1000, 0, $cpid);
 
-    local ($!,$^E) = (0,0);
-    my $result = _win32api('GetProcessAffinityMask', $processHandle,
-                           $processMask, $systemMask);
-    $processMask = __pdword_ptr_to_int($processMask);
-    $systemMask = __pdword_ptr_to_int($systemMask);
-    if ($result == 0) {
-      carp 'Could not determine process affinity ',
+  local ($!,$^E) = (0,0);
+  my $result = _win32api('GetProcessAffinityMask', 
+			 $processHandle, $processMask, $systemMask);
+
+  if ($result == 0) {
+    carp 'Could not determine process affinity ',
         "(required to get thread affinity)\n";
-      return 0;
-    }
-    if ($processMask == 0) {
-      carp 'Process affinity apparently set to zero, ',
+    return 0;
+  }
+
+  $processMask = _unpack_Win32_mask($processMask);
+  # $systemMask = _unpack_Win32_mask($systemMask);
+
+  if ($processMask == 0) {
+    carp 'Process affinity apparently set to zero, ',
         "will not be able to set/get compatible thread affinity\n";
-      return 0;
-    }
+    return 0;
+  }
 
-    my $mask = $processMask;
-    my $previous_affinity = _win32api('SetThreadAffinityMask',
-                                      $threadHandle, $mask);
+  my $previous_affinity = _win32api('SetThreadAffinityMask',
+				    $threadHandle, $processMask);
 
-    if ($previous_affinity == 0) {
-      Carp::cluck "Win32::API::SetThreadAffinityMask: $! / $^E\n";
-      return 0;
-    }
+  if ($previous_affinity == 0) {
+    Carp::cluck "Win32::API::SetThreadAffinityMask: $! / $^E\n";
+    return 0;
+  }
 
-    # hope we can restore it.
-    if ($previous_affinity != $mask) {
-      local $! = 0;
-      local $^E = 0;
-      my $new_affinity = _win32api('SetThreadAffinityMask',
-                                   $threadHandle, $previous_affinity);
-      if ($new_affinity == 0) {
-        # XXX s/Carp::cluck/carp/
+  # hope we can restore it.
+  if ($previous_affinity != $processMask) {
+    local $! = 0;
+    local $^E = 0;
+    my $new_affinity = _win32api('SetThreadAffinityMask',
+				 $threadHandle, $previous_affinity);
+    if ($new_affinity == 0) {
 
-        # http://msdn.microsoft.com/en-us/library/ms686247(v=vs.85).aspx:
-        #
-        # "If the thread affinity mask requests a processor that is not
-        # selected for the process affinity mask, the last error code
-        # is ERROR_INVALID_PARAMETER."
+      # http://msdn.microsoft.com/en-us/library/ms686247(v=vs.85).aspx:
+      #
+      # "If the thread affinity mask requests a processor that is not
+      # selected for the process affinity mask, the last error code
+      # is ERROR_INVALID_PARAMETER." ($! => 87)
+      #
+      # In MSWin32, the result of a fork() is a "pseudo-process",
+      # a Win32 thread that is still contained by its parent.
+      # So on MSWin32 a race condition exists where the parent
+      # process can choose an incompatible set of affinities 
+      # during the execution of this function (basically, between
+      # the two calls to  SetThreadAffinityMask , above).
 
-        Carp::cluck "Sys::CpuAffinity::_getThreadAffinity_with_Win32API:\n",
-          "set thread $pid affinity to $mask in order to retrieve\n",
+      carp "Sys::CpuAffinity::_getThreadAffinity_with_Win32API:\n",
+          "set thread $thrid affinity to $processMask in order to retrieve\n",
           "affinity, but was unable to restore previous value:\n",
           "Handle=$threadHandle, Prev=$previous_affinity, Error=$! / $^E\n";
-      }
     }
-    return $previous_affinity;
   }
+  return $previous_affinity;
 }
+
+sub _unpack_Win32_mask {
+  # The Win32 GetProcessAffinityMask function takes
+  # "PDWORD" arguments. We pass (arbitrary) integers for these 
+  # arguments, but on return they are changed to 1-4 bytes 
+  # representing a packed integer.
+
+  my $packed = shift;
+  return unpack "L", substr($packed . "\0\0\0\0", 0, 4);
+}
+
+
 
 sub _getAffinity_with_Win32Process {
   my $pid = shift;
@@ -593,13 +625,11 @@ sub _getAffinity_with_Win32Process {
   }
 
   my ($processHandle, $processMask, $systemMask, $result);
-  ($processMask, $systemMask) = (0,0);
   if (! Win32::Process::Open($processHandle, $pid, 0)
       || ref($processHandle) ne 'Win32::Process') {
     return 0;
   }
-  if (! $processHandle->GetProcessAffinityMask(
-	       $processMask, $systemMask)) {
+  if (! $processHandle->GetProcessAffinityMask($processMask, $systemMask)) {
     return 0;
   }
   _debug("affinity with Win32::Process: $processMask");
@@ -738,6 +768,7 @@ sub _getAffinity_with_xs_win32 {
     $pid = __pid_to_winpid($opid);
     return 0 if !defined $pid;
   }
+
   if ($pid < 0) {
     return 0 if !defined &xs_win32_getAffinity_thread;
     return xs_win32_getAffinity_thread(-$pid);
@@ -746,6 +777,7 @@ sub _getAffinity_with_xs_win32 {
       return xs_win32_getAffinity_proc($pid);
     } elsif (defined &xs_win32_getAffinity_thread) {
       return xs_win32_getAffinity_thread(0);
+    } else {
     }
     return 0;
   } elsif (defined &xs_win32_getAffinity_proc) {
@@ -765,10 +797,25 @@ sub _getAffinity_with_xs_pthread_self_getaffinity {
   return 0 if $pid != $$;
   return 0 if !defined &xs_pthread_self_getaffinity;
   my $z = xs_pthread_self_getaffinity(0);
-  if ($z == 0) { # pthread not bound
-      # must use $_NUM_CPUS_CACHED || ... to pass test t/12#2
-      my $np = $_NUM_CPUS_CACHED || getNumCpus();
-      return 2 ** $np - 1;
+  if ($z == 0) {
+
+    # does $z==0 mean that the current thread is not bound (i.e.,
+    # bound to all processors)? Or does it mean that the
+    # pthread_getaffinity_np() call didn't do anything (but still
+    # returned 0/success?)
+    # Does pthread_getaffinity_np() always return 0 for normal users
+    # and return non-zero for the super-user?
+
+    # must use $_NUM_CPUS_CACHED || ... to pass test t/12#2
+    my $np = $_NUM_CPUS_CACHED || getNumCpus();
+    my $maxmask = 2 ** $np - 1;
+
+    my $y = _setAffinity_with_xs_pthread_self_setaffinity($pid, $maxmask);
+    if ($y) {
+      return $maxmask;
+    } else {
+      return 0;
+    }
   } 
   return $z;
 }
@@ -850,7 +897,7 @@ sub _setAffinity_with_Win32API {
 
 sub _setAffinity_with_Win32Process {
   my ($pid, $mask) = @_;
-# return 0 if $^O ne 'MSWin32';   # cygwin? can't get it to work reliably
+  return 0 if $^O ne 'MSWin32';   # cygwin? can't get it to work reliably
   return 0 if !_configModule('Win32::Process');
 
   if ($^O eq 'cygwin') {
@@ -1086,6 +1133,31 @@ sub _setAffinity_with_xs_irix_sysmp {
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
+sub _maskToArray {
+  my ($mask) = @_;
+  my @mask = ();
+  my $i = 0;
+  while ($mask > 0) {
+    if ($mask & 1) {
+      push @mask, $i;
+    }
+    $i++;
+    $mask >>= 1;
+  }
+  return @mask;
+}
+
+sub _arrayToMask {
+  my @procs = @_;
+  my $mask = 0;
+  for my $proc (@procs) {
+    $mask |= 2 ** $proc;
+  }
+  return $mask;
+}
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
 sub __pid_to_winpid {
   my ($cygwinpid) = @_;
   if ($] >= 5.008 && defined &Cygwin::pid_to_winpid) {
@@ -1261,7 +1333,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 1.00
+Version 1.01
 
 =head1 SYNOPSIS
 

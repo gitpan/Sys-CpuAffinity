@@ -11,11 +11,14 @@ MODULE = Sys::CpuAffinity        PACKAGE = Sys::CpuAffinity
 int
 xs_pthread_self_getaffinity(dummy)
 	int dummy
-    CODE:
+CODE:
 	/*
 	 * Retrieves the CPU affinity of the current thread.
 	 * For use with NetBSD, but it also might work on Linux and FreeBSD.
 	 * On NetBSD, may require super-user.
+	 *
+	 * Return < 0 on error.
+	 * Return current thread affinity on success.
 	 */
 
 	cpuset_t *cset;
@@ -33,7 +36,8 @@ xs_pthread_self_getaffinity(dummy)
 	}
 	error = pthread_getaffinity_np(pth, cpuset_size(cset), cset);
 	if (error) {
-	    fprintf(stderr, "pthread_getaffinity_np returned error: %d\n", error);
+	    fprintf(stderr, "pthread_getaffinity_np: %d %s\n",
+		    error, strerror(error));
 	    affinity = -1;
 	}
 	if (affinity >= 0) {
@@ -45,18 +49,28 @@ xs_pthread_self_getaffinity(dummy)
 		    affinity |= 1 << icpu;
 	        }
  	    }
+	    /*
+	     * What does it mean if affinity is still 0 here?
+	     * Does that mean that pthread_getaffinity_np didn't work?
+	     * Or does it mean that the thread affinity is in a default
+	     * (i.e., affinitied to all processors)?
+	     */
 	}
-	if (cset != NULL) cpuset_destroy(cset);
+	if (cset != NULL) {
+	    cpuset_destroy(cset);
+	}
 	RETVAL = affinity;
-    OUTPUT:
+OUTPUT:
 	RETVAL
 
 int 
 xs_pthread_self_setaffinity(affinity)
         int affinity
-    CODE:
+CODE:
 	/*
 	 * Sets the CPU affinity for the current thread.
+	 * For use with NetBSD. Might need to be run as super-user.
+	 * Returns 0 on error, 1 on success.
 	 */
 	cpuset_t *cset;
 	pthread_t pth;
@@ -80,15 +94,18 @@ xs_pthread_self_setaffinity(affinity)
 	    }
 	    error = pthread_setaffinity_np(pth, cpuset_size(cset), cset);
 	    if (error) {
-		fprintf(stderr, "xs_set_pthread_self_affinity: error %d in pthread_setaffinity_np call\n", error);
+		fprintf(stderr, "xs_set_pthread_self_affinity: %d %s\n",
+		        error, strerror(error));
 		result = 0;
 	    } else {
 	 	result = 1;
 	    }
 	}
-	if (cset != NULL) cpuset_destroy(cset);
+	if (cset != NULL) {
+	    cpuset_destroy(cset);
+	}
 	RETVAL = result;
-    OUTPUT:
+OUTPUT:
 	RETVAL
 
 
