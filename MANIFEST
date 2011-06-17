@@ -28,3 +28,4 @@ t/10-exercise.t
 t/11-exercise-all.t
 t/12-32cpus.t
 META.yml
+META.json

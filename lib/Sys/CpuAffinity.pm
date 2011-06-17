@@ -8,9 +8,10 @@ use base qw(DynaLoader);
 ## no critic (DotMatch,LineBoundary,Sigils,Punctuation,Quotes,Magic,Checked)
 ## no critic (NamingConventions::Capitalization,BracedFileHandle)
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 our $DEBUG = $ENV{DEBUG} || 0;
-eval { bootstrap Sys::CpuAffinity $VERSION };
+our $XS_LOADED = 0;
+eval { bootstrap Sys::CpuAffinity $VERSION; $XS_LOADED = 1 };
 
 sub import {
 }
@@ -139,9 +140,11 @@ sub getNumCpus {
     || _getNumCpus_from_proc_cpuinfo()
     || _getNumCpus_from_proc_stat()
     || _getNumCpus_from_bindprocessor()
+    ## cpan test 1062dc56-75df-11e0-a49b-9797e3ecc90b:
+    ##    sysctl more reliable than dmesg_bsd for OpenBSD
+    || _getNumCpus_from_sysctl()
     || _getNumCpus_from_dmesg_bsd()
     || _getNumCpus_from_dmesg_solaris()
-    || _getNumCpus_from_sysctl()
     || _getNumCpus_from_psrinfo()
     || _getNumCpus_from_hinv()
     || _getNumCpus_from_hwprefs()
@@ -214,7 +217,7 @@ sub _getNumCpus_from_Win32API_System_Info {
 
 
 sub _getNumCpus_from_xs_cpusetGetCPUCount { # NOT TESTED irix
-  if (defined &xs_cpusetGetCPUCount) {
+  if ($XS_LOADED && defined &xs_cpusetGetCPUCount) {
     return xs_cpusetGetCPUCount();
   } else {
     return 0;
@@ -347,6 +350,13 @@ sub _getNumCpus_from_dmesg_solaris {
 	  }
         }
     }
+
+    # this doesn't always work (www.cpantesters.org/cpan/report/35d7685a-70b0-11e0-9552-4df9775ebe45)
+    # what else should we check for in  @dmesg ?
+    if ($ncpus == 0) {
+      # ...
+    }
+
     return $ncpus;
 }
 
@@ -384,7 +394,7 @@ sub _getNumCpus_from_hinv {   # NOT TESTED irix
   return 0 if !_configExternalProgram('hinv');
   my $cmd = _configExternalProgram('hinv');
 
-  # 1.01: debug
+  # 1.01-1.02: debug
   if ($Sys::CpuAffinity::IS_TEST && !$Sys::CpuAffinity::HINV_CALLED++) {
     print STDERR "$cmd output:\n";
     print STDERR qx($cmd);
@@ -534,9 +544,9 @@ sub _getThreadAffinity_with_Win32API {
   # process affinity, so get process affinity.
 
   # XXX - this function only works for threads that are contained
-  #       by the current process, and that should cover the vast
-  #       majority of use cases of this module. But how would you
-  #       get the process id of an arbitrary Win32 thread?
+  #       by the current process, and that should cover most use
+  #       cases of this module. But how would you get the process 
+  #       id of an arbitrary Win32 thread?
   my $cpid = _win32api('GetCurrentProcessId');
 
   my $processHandle
@@ -1333,7 +1343,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 1.01
+Version 1.02
 
 =head1 SYNOPSIS
 
@@ -1693,5 +1703,8 @@ Most pressing issues 1.00:
   2. Test crashes on linux:
          during xs_sched_getaffinity
 
+Failures in 1.01
 
-
+  1. Linux crash during xs_sched_getaffinity (x3)
+  2. Irix crash during xs_cpusetGetCPUCount (no C compiler)
+  3. OpenBSD dmesg_bsd, sysctl disagree on CPU count (4 vs 2)

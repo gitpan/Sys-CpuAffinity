@@ -1,5 +1,9 @@
 Revision history for Sys-CpuAffinity
 
+1.02	2011-06-17
+	Removed trivial hello.xs code snippet on the theory that it results
+	in segfaults on linux.
+
 1.01	2011-04-21
 	XS fixes for FreeBSD.
 	Improved several techniques for counting CPUs.

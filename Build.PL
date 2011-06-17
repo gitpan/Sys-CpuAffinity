@@ -36,7 +36,11 @@ and install this module as opposed to just testing it.
 
 ___
   ;
-    exit 0;
+
+    # a CPAN tester hack to get an NA report
+    # instead of a FAIL report
+    die "No support for OS - one processor and automated testing";
+
   }
 }
 
@@ -51,7 +55,7 @@ library function only allow a process to be bound to a single
 CPU. Calls to  &Sys::CpuAffinity::setAffinity  that specify more than
 one processor might only bind the process to a single processor.
 
-;
+;#';
 }
 if ($^O =~ /irix/i) {
   print <<"";
