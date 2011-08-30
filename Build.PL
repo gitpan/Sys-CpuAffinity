@@ -26,6 +26,7 @@ if ($ENV{AUTOMATED_TESTING}) {
   if ($status >> 8 == 1) {
 
     print STDERR <<"___";
+
 Single processor system with automated smoke testing detected.
 Aborting build because many tests in this distribution are skipped
 or dumbed down for single-processor systems, and the resulting

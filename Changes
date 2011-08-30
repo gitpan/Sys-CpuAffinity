@@ -1,5 +1,9 @@
 Revision history for Sys-CpuAffinity
 
+1.03	2011-08-30
+	Implemented IsWow64 detection in Windows.
+        Using taskset in linux to count CPUs.
+
 1.02	2011-06-17
 	Removed trivial hello.xs code snippet on the theory that it results
 	in segfaults on linux.
