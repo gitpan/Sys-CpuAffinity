@@ -7,8 +7,8 @@ contrib/contrib.doc
 contrib/cpusetGetCPUCount.xs
 contrib/cpuset_getaffinity.xs
 contrib/cpuset_setaffinity.xs
-contrib/getaffinity_processor_bind.xs
 contrib/fortytwo.xs
+contrib/getaffinity_processor_bind.xs
 contrib/irix_sysmp.xs
 contrib/linux-sched_getaffinity.xs
 contrib/linux-sched_setaffinity.xs

@@ -8,7 +8,7 @@ use base qw(DynaLoader);
 ## no critic (DotMatch,LineBoundary,Sigils,Punctuation,Quotes,Magic,Checked)
 ## no critic (NamingConventions::Capitalization,BracedFileHandle)
 
-our $VERSION = '1.03';
+our $VERSION = '1.04';
 our $DEBUG = $ENV{DEBUG} || 0;
 our $XS_LOADED = 0;
 eval { bootstrap Sys::CpuAffinity $VERSION; $XS_LOADED = 1 };
@@ -439,7 +439,7 @@ sub _getNumCpus_from_hinv {   # NOT TESTED irix
   return 0 if !_configExternalProgram('hinv');
   my $cmd = _configExternalProgram('hinv');
 
-  # 1.01-1.03: debug
+  # 1.01-1.04: debug
   if ($Sys::CpuAffinity::IS_TEST && !$Sys::CpuAffinity::HINV_CALLED++) {
     print STDERR "$cmd output:\n";
     print STDERR qx($cmd);
@@ -746,7 +746,7 @@ sub _getAffinity_with_taskset {
 sub _getAffinity_with_xs_sched_getaffinity {
   my $pid = shift;
   return 0 if !defined &xs_sched_getaffinity_get_affinity;
-  return xs_sched_getaffinity_get_affinity($pid);
+  return xs_sched_getaffinity_get_affinity($pid,0);
 }
 
 sub _getAffinity_with_xs_DEBUG_sched_getaffinity {
@@ -758,8 +758,8 @@ sub _getAffinity_with_xs_DEBUG_sched_getaffinity {
   # out what might be going wrong.
 
   my $pid = shift;
-  return 0 if !defined &xs_sched_getaffinity_get_affinity_debug;
-  return xs_sched_getaffinity_get_affinity_debug($pid);
+  return 0 if !defined &xs_sched_getaffinity_get_affinity;
+  return xs_sched_getaffinity_get_affinity($pid,1);
 }
 
 sub _getAffinity_with_pbind {
@@ -1437,7 +1437,7 @@ Sys::CpuAffinity - Set CPU affinity for processes
 
 =head1 VERSION
 
-Version 1.03
+Version 1.04
 
 =head1 SYNOPSIS
 
@@ -1771,16 +1771,10 @@ by default.
 Some systems have a concept of the maximum number of processors that
 they can suppport.
 
-Currently (0.91-0.99), constant parameters to Win32 API functions are 
-hard coded, not extracted from the local header files. Microsoft is
-probably loathe to change these constants between different versions,
-but this still seems dodgy.
-
+Currently (0.91-1.04), constant parameters to Win32 API functions are 
+hard coded, not extracted from the local header files.
 
 ##########################################
-
-Cygwin: if Win32::API is not installed and setCpuAffinity doesn't work,
-recommend Win32::API
 
 As of 0.99 - occasional failures
 
@@ -1803,21 +1797,16 @@ Failures in 1.01
   2. Irix crash during xs_cpusetGetCPUCount (no C compiler)
   3. OpenBSD dmesg_bsd, sysctl disagree on CPU count (4 vs 2)
 
-##################################################################
+Issues in 1.02-1.04
 
-1.02:
-
-  darwin:  hwprefs  and  sysctl  give different results?
+  1. darwin:  hwprefs  and  sysctl  give different results?
     www.cpantesters.org/cpan/report/3982d2fa-9c2a-11e0-a04e-9d9517dc0771
-
-  openbsd: dmesg_bsd  and  sysctl  give different results?
+  2. openbsd: dmesg_bsd  and  sysctl  give different results?
     www.cpantesters.org/cpan/report/84d41dda-9942-11e0-a324-58f41aecacb6
     www.cpantesters.org/cpan/report/0c6e981c-a2dd-11e0-a324-58f41aecacb6
-
-  linux: 
-    /usr/bin/taskset available but still cannot count CPUs? (x16)
+  3. linux: /usr/bin/taskset available but still cannot count CPUs? (x16)
       /www.cpantesters.org/cpan/report/92ab9df8-a6fc-11e0-829d-5250641c9bbe
-    xs_sched_getaffinity crash (x4)
+     xs_sched_getaffinity keeps segfaulting (x4)
+  4. getNumCpus_from_Win32API_System_Info: garbage result on WOW64 systems
 
-  mswin32:
-    getNumCpus_from_Win32API_System_Info: garbage result on WOW64 systems
+
