@@ -7,7 +7,7 @@ use Carp;
 
 
 
-if ($ENV{AUTOMATED_TESTING}) {
+if ($ENV{AUTOMATED_TESTING} && !$ENV{BUILD_EVEN_IF_AUTOMATED_TESTING}) {
 
   # in general, it should be OK to install this distribution on 
   # a single-processor system. However many of the tests are
@@ -17,7 +17,7 @@ if ($ENV{AUTOMATED_TESTING}) {
 
   # Some systems may require the XS code to be built before the
   # number of processors can be detected (Irix is like that),
-  # so this gate won't always work.
+  # so this gate check won't always work.
 
   use Config;
   my $status = system($Config{perlpath}, "-Ilib", "-MSys::CpuAffinity",
@@ -32,8 +32,10 @@ Aborting build because many tests in this distribution are skipped
 or dumbed down for single-processor systems, and the resulting
 PASS reports from the CPAN testers are not as helpful.
 
-Set \$ENV{AUTOMATED_TESTING} to a false value if you really wish to build
-and install this module as opposed to just testing it.
+Set \$ENV{AUTOMATED_TESTING} to a false value OR
+\$ENV{BUILD_EVEN_IF_AUTOMATED_TESTING} to a true value
+if you really wish to build and install this module as 
+opposed to just testing it.
 
 ___
   ;
@@ -56,7 +58,7 @@ library function only allow a process to be bound to a single
 CPU. Calls to  &Sys::CpuAffinity::setAffinity  that specify more than
 one processor might only bind the process to a single processor.
 
-;#';
+;                                                                     #';
 }
 if ($^O =~ /irix/i) {
   print <<"";
