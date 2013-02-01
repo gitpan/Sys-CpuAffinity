@@ -1,5 +1,8 @@
 Revision history for Sys-CpuAffinity
 
+1.06	2013-02-01
+	Prealloc mask strings to avoid buffer overflow in Win32::API calls.
+
 1.05	2011-11-08
 	Fix issue in t/11 when there is only one processor.
 	_getNumCpus_from_dmesg_bsd now handles duplicate msgs in dmesg output

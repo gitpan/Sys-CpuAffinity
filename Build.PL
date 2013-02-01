@@ -5,8 +5,6 @@ use Module::Build::ConfigData;
 use Carp;
 
 
-
-
 if ($ENV{AUTOMATED_TESTING} && !$ENV{BUILD_EVEN_IF_AUTOMATED_TESTING}) {
 
   # in general, it should be OK to install this distribution on 
@@ -211,7 +209,8 @@ my $builder = $builderclass->new(
 	module_name         => 'Sys::CpuAffinity',
 	license             => 'perl',
 	dist_author         => q[Marty O'Brien <mob@cpan.org>],
-	dist_version_from   => 'lib/Sys/CpuAffinity.pm',
+        dist_version        => '1.06',
+	#dist_version_from   => 'lib/Sys/CpuAffinity.pm',
 	build_requires      => {
 		'Module::Build'      => 0.25,
 		'Test::More'         => 0,
@@ -237,7 +236,6 @@ my $builder = $builderclass->new(
 	extra_linker_flags   => $extra_linker_flags,
 	sign                 => 0,
 );
-
 
 $builder->create_build_script();
 

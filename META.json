@@ -4,7 +4,7 @@
       "Marty O'Brien <mob@cpan.org>"
    ],
    "dynamic_config" : 1,
-   "generated_by" : "Module::Build version 0.3705, CPAN::Meta::Converter version 2.110440",
+   "generated_by" : "Module::Build version 0.38, CPAN::Meta::Converter version 2.120921",
    "keywords" : [
       "affinity"
    ],
@@ -20,12 +20,12 @@
       "build" : {
          "requires" : {
             "Module::Build" : "0.25",
-            "Test::More" : 0
+            "Test::More" : "0"
          }
       },
       "configure" : {
          "requires" : {
-            "Module::Build" : "0.37"
+            "Module::Build" : "0.38"
          }
       },
       "runtime" : {
@@ -38,7 +38,7 @@
    "provides" : {
       "Sys::CpuAffinity" : {
          "file" : "lib/Sys/CpuAffinity.pm",
-         "version" : "1.02"
+         "version" : "1.06"
       }
    },
    "release_status" : "stable",
@@ -50,5 +50,5 @@
          "http://dev.perl.org/licenses/"
       ]
    },
-   "version" : "1.02"
+   "version" : "1.06"
 }
